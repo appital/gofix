@@ -1182,4 +1182,15 @@ const (
 	//  - Y
 	//  - N
 	EnableNextExpectedMsgSeqNum string = "EnableNextExpectedMsgSeqNum"
+
+	// MaxMessagesPerSecond is a setting that allows us to set a rate limit on
+	// outgoing messages to avoid being throttled by a remote counterparty.
+	//
+	// Required: No
+	//
+	// Default: 0 (do not rate limit outoging messages)
+	//
+	// Valid Values:
+	//  - A positive integer
+	MaxMessagesPerSecond string = "MaxMessagesPerSecond"
 )

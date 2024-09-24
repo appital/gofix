@@ -470,6 +470,15 @@ func (f sessionFactory) buildAcceptorSettings(session *session, settings *Sessio
 	if err := f.buildHeartBtIntSettings(session, settings, false); err != nil {
 		return err
 	}
+
+	if err := f.buildMaxMessagesPerSecondSettings(session, settings); err != nil {
+		return err
+	}
+
+	if err := f.buildSessionLogoutTimeoutSettings(session, settings); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -477,6 +486,10 @@ func (f sessionFactory) buildInitiatorSettings(session *session, settings *Sessi
 	session.InitiateLogon = true
 
 	if err := f.buildHeartBtIntSettings(session, settings, true); err != nil {
+		return err
+	}
+
+	if err := f.buildMaxMessagesPerSecondSettings(session, settings); err != nil {
 		return err
 	}
 
@@ -499,23 +512,8 @@ func (f sessionFactory) buildInitiatorSettings(session *session, settings *Sessi
 		}
 	}
 
-	session.LogoutTimeout = 2 * time.Second
-	if settings.HasSetting(config.LogoutTimeout) {
-		timeout, err := settings.DurationSetting(config.LogoutTimeout)
-		if err != nil {
-			timeoutInt, err := settings.IntSetting(config.LogoutTimeout)
-			if err != nil {
-				return err
-			}
-
-			session.LogoutTimeout = time.Duration(timeoutInt) * time.Second
-		} else {
-			session.LogoutTimeout = timeout
-		}
-
-		if session.LogoutTimeout <= 0 {
-			return errors.New("LogonTimeout must be greater than zero")
-		}
+	if err := f.buildSessionLogoutTimeoutSettings(session, settings); err != nil {
+		return err
 	}
 
 	session.LogonTimeout = 10 * time.Second
@@ -589,4 +587,42 @@ func (f sessionFactory) buildHeartBtIntSettings(session *session, settings *Sess
 		session.HeartBtInt = time.Duration(heartBtInt) * time.Second
 	}
 	return
+}
+
+func (f sessionFactory) buildMaxMessagesPerSecondSettings(session *session, settings *SessionSettings) (err error) {
+	session.MaxMessagesPerSecond = 0
+	if settings.HasSetting(config.MaxMessagesPerSecond) {
+		if session.MaxMessagesPerSecond, err = settings.IntSetting(config.MaxMessagesPerSecond); err != nil {
+			return
+		}
+
+		if session.MaxMessagesPerSecond < 0 {
+			return errors.New("MaxMessagesPerSecond must be greater than or equal to zero")
+		}
+	}
+
+	return
+}
+
+func (f sessionFactory) buildSessionLogoutTimeoutSettings(session *session, settings *SessionSettings) error {
+	session.LogoutTimeout = 2 * time.Second
+	if settings.HasSetting(config.LogoutTimeout) {
+		timeout, err := settings.DurationSetting(config.LogoutTimeout)
+		if err != nil {
+			timeoutInt, err := settings.IntSetting(config.LogoutTimeout)
+			if err != nil {
+				return err
+			}
+
+			session.LogoutTimeout = time.Duration(timeoutInt) * time.Second
+		} else {
+			session.LogoutTimeout = timeout
+		}
+
+		if session.LogoutTimeout <= 0 {
+			return errors.New("LogonTimeout must be greater than zero")
+		}
+	}
+
+	return nil
 }
