@@ -151,6 +151,27 @@ make build-test-srv
 make accept
 ```
 
+### Benchmarking
+
+Performance changes should come with measurements. The repository carries a
+benchmark corpus, per-layer micro-benchmarks and a full-stack load generator:
+
+```sh
+# record a baseline, make a change, then compare
+make bench-baseline
+make bench
+make bench-compare
+
+# profile one benchmark
+make bench-profile BENCH=BenchmarkRoundTrip
+
+# full-stack load test over loopback TCP, with profiles
+make generate
+make loadtest
+```
+
+See [docs/BENCHMARKING.md](docs/BENCHMARKING.md) for the details.
+
 ## Licensing
 
 This software is available under the QuickFIX Software License. Please see the [LICENSE.txt](https://github.com/quickfixgo/quickfix/blob/main/LICENSE.txt) for the terms specified by the QuickFIX Software License.

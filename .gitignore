@@ -5,6 +5,10 @@
 vendor
 _test/test
 _test/echo_server
+_test/loadgen_bin
+.bench
+# go test leaves the test binary behind when profiling
+*.test
 _test/tmp
 _vendor*
 gen

@@ -25,12 +25,22 @@ import (
 	"github.com/quickfixgo/quickfix/datadictionary"
 )
 
+// BenchmarkParseMessage parses repeatedly into a single Message, which reuses
+// the field arena in doParsing. A live session allocates a fresh Message per
+// inbound message instead - see BenchmarkParse in bench_parse_test.go, whose
+// fresh/reused split measures the difference.
 func BenchmarkParseMessage(b *testing.B) {
 	rawMsg := bytes.NewBufferString("8=FIX.4.29=10435=D34=249=TW52=20140515-19:49:56.65956=ISLD11=10021=140=154=155=TSLA60=00010101-00:00:00.00010=039")
 
 	msg := NewMessage()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
-		_ = ParseMessage(msg, rawMsg)
+		if err := ParseMessage(msg, rawMsg); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
