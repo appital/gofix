@@ -22,13 +22,27 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// BenchmarkParser_ReadMessage measures steady-state framing: one parser reading
+// message after message from a stream that never runs dry, which is what a live
+// connection looks like. Constructing a parser per iteration, as this benchmark
+// used to, measured the parser's own allocation instead.
+//
+// See BenchmarkParserReadMessage in bench_parse_test.go for the same measurement
+// over the realistic message corpus.
 func BenchmarkParser_ReadMessage(b *testing.B) {
-	stream := "8=FIXT.1.19=11135=D34=449=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=2348=FIXT.1.19=9535=D34=549=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=198"
+	stream := "8=FIXT.1.19=11135=D34=449=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=2348=FIXT.1.19=9535=D34=549=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=198"
+
+	p := newParser(&loopReader{data: []byte(stream)})
+
+	b.ReportAllocs()
+	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		reader := strings.NewReader(stream)
-		parser := newParser(reader)
-		_, _ = parser.ReadMessage()
+		msg, err := p.ReadMessage()
+		if err != nil {
+			b.Fatal(err)
+		}
+		sinkInt = msg.Len()
 	}
 }
 

@@ -33,6 +33,80 @@ lint: linters-install
 # See https://golangci-lint.run/welcome/install/ for more details.
 
 # ---------------------------------------------------------------
+# Targets related to benchmarking and profiling -
+#
+# The micro-benchmarks live in the root package and depend only on core APIs,
+# so they run on a fresh clone. The loadgen lives under _test/ because it uses
+# the generated gen/... packages; run `make generate` before `make loadgen`.
+#
+# Typical workflow:
+#   make bench-baseline      # record where we are today
+#   ...make a change...
+#   make bench bench-compare # see what it did
+
+BENCH ?= .
+BENCH_COUNT ?= 10
+BENCH_TIME ?= 1s
+BENCH_GOMAXPROCS ?= 4
+
+# Run the micro-benchmarks into .bench/current.txt.
+bench:
+	NAME=current BENCH='$(BENCH)' COUNT=$(BENCH_COUNT) BENCHTIME=$(BENCH_TIME) \
+		GOMAXPROCS=$(BENCH_GOMAXPROCS) ./scripts/bench.sh
+
+# Record a reference run to compare later changes against.
+bench-baseline:
+	NAME=baseline BENCH='$(BENCH)' COUNT=$(BENCH_COUNT) BENCHTIME=$(BENCH_TIME) \
+		GOMAXPROCS=$(BENCH_GOMAXPROCS) ./scripts/bench.sh
+
+bench-compare:
+	./scripts/benchstat.sh .bench/baseline.txt .bench/current.txt
+
+# Confirm the harness is quiet enough to trust: two runs of identical code
+# should show no significant difference.
+bench-selftest:
+	NAME=selftest-a BENCH='$(BENCH)' COUNT=$(BENCH_COUNT) BENCHTIME=$(BENCH_TIME) \
+		GOMAXPROCS=$(BENCH_GOMAXPROCS) ./scripts/bench.sh
+	NAME=selftest-b BENCH='$(BENCH)' COUNT=$(BENCH_COUNT) BENCHTIME=$(BENCH_TIME) \
+		GOMAXPROCS=$(BENCH_GOMAXPROCS) ./scripts/bench.sh
+	./scripts/benchstat.sh .bench/selftest-a.txt .bench/selftest-b.txt
+
+# Profile one benchmark. Pass BENCH= to pick it, e.g.
+#   make bench-profile BENCH=BenchmarkRoundTrip
+bench-profile:
+	NAME=profile BENCH='$(BENCH)' COUNT=1 BENCHTIME=$(BENCH_TIME) \
+		GOMAXPROCS=$(BENCH_GOMAXPROCS) \
+		CPUPROFILE=.bench/cpu.prof MEMPROFILE=.bench/mem.prof ./scripts/bench.sh
+	@echo
+	@echo "top allocation sites:"
+	@go tool pprof -top -nodecount=20 -sample_index=alloc_objects .bench/mem.prof 2>/dev/null | tail -22
+
+# The loadgen needs gen/, so it builds out of _test like the acceptance server.
+build-loadgen:
+	cd _test; go build -v -o loadgen_bin ./loadgen/
+
+LOAD_DURATION ?= 30s
+LOAD_WARMUP ?= 5s
+LOAD_RATE ?= 5000
+LOAD_SESSIONS ?= 1
+LOAD_MIX ?= orderflow
+
+# Run the full-stack load test and collect every profile.
+loadtest: build-loadgen
+	mkdir -p .bench
+	cd _test; ./loadgen_bin \
+		-duration=$(LOAD_DURATION) -warmup=$(LOAD_WARMUP) \
+		-rate=$(LOAD_RATE) -sessions=$(LOAD_SESSIONS) -mix=$(LOAD_MIX) \
+		-cpuprofile=../.bench/loadgen-cpu.prof \
+		-memprofile=../.bench/loadgen-mem.prof \
+		-blockprofile=../.bench/loadgen-block.prof \
+		-mutexprofile=../.bench/loadgen-mutex.prof \
+		-json=../.bench/loadgen.json
+
+.PHONY: bench bench-baseline bench-compare bench-selftest bench-profile build-loadgen loadtest
+# ---------------------------------------------------------------
+
+# ---------------------------------------------------------------
 # Targets related to running acceptance tests -
 
 ifdef STORE_TYPE
