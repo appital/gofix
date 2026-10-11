@@ -83,6 +83,9 @@ build: build-src build-test-srv
 test-ci:
 	go test -v -cover `go list ./... | grep -v quickfix/gen`
 
+test-ci-nodb:
+	go test -cover `go list ./... | grep -v quickfix/gen | grep -v -E '/(mongo|sql|composite)$$'`
+
 generate-ci: clean
 	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/quickfixgo/quickfix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
 
