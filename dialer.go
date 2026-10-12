@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 )
 
 func loadDialerConfig(settings *SessionSettings) (dialer proxy.ContextDialer, err error) {

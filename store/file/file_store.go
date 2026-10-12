@@ -25,18 +25,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 	"github.com/pkg/errors"
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
 )
 
 type fileStoreFactory struct {
-	settings *quickfix.Settings
+	settings *gofix.Settings
 }
 
 type fileStore struct {
-	sessionID          quickfix.SessionID
-	cache              quickfix.MessageStore
+	sessionID          gofix.SessionID
+	cache              gofix.MessageStore
 	bodyFname          string
 	headerFname        string
 	sessionFname       string
@@ -53,12 +53,12 @@ type fileStore struct {
 }
 
 // NewStoreFactory returns a file-based implementation of MessageStoreFactory.
-func NewStoreFactory(settings *quickfix.Settings) quickfix.MessageStoreFactory {
+func NewStoreFactory(settings *gofix.Settings) gofix.MessageStoreFactory {
 	return fileStoreFactory{settings: settings}
 }
 
 // Create creates a new FileStore implementation of the MessageStore interface.
-func (f fileStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickfix.MessageStore, err error) {
+func (f fileStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.MessageStore, err error) {
 	globalSettings := f.settings.GlobalSettings()
 	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
 
@@ -87,14 +87,14 @@ func (f fileStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickfi
 	return newFileStore(sessionID, dirname, fsync)
 }
 
-func newFileStore(sessionID quickfix.SessionID, dirname string, fileSync bool) (*fileStore, error) {
+func newFileStore(sessionID gofix.SessionID, dirname string, fileSync bool) (*fileStore, error) {
 	if err := os.MkdirAll(dirname, os.ModePerm); err != nil {
 		return nil, err
 	}
 
 	sessionPrefix := createFilenamePrefix(sessionID)
 
-	memStore, memErr := quickfix.NewMemoryStoreFactory().Create(sessionID)
+	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
 	if memErr != nil {
 		return nil, errors.Wrap(memErr, "cache creation")
 	}

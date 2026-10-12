@@ -13,14 +13,14 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"crypto/tls"
 	"net"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 
 	proxyproto "github.com/pires/go-proxyproto"
 	"github.com/stretchr/testify/assert"

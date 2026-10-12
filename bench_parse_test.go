@@ -13,14 +13,14 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/datadictionary"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // BenchmarkParse measures ParseMessage with no data dictionary.

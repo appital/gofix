@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Run the quickfix micro-benchmarks with the knobs that make results
+# Run the gofix micro-benchmarks with the knobs that make results
 # comparable between runs, and write them where bench-compare can find them.
 #
 # Environment:

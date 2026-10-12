@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
+	"github.com/appital/gofix/datadictionary"
 )
 
 // Header is first section of a FIX Message.

@@ -184,7 +184,7 @@ func (r results) writeJSON(w io.Writer) error {
 }
 
 func (r results) writeText(w io.Writer) {
-	fmt.Fprintf(w, "\n=== quickfix loadgen ===\n")
+	fmt.Fprintf(w, "\n=== gofix loadgen ===\n")
 
 	keys := make([]string, 0, len(r.Config))
 	for k := range r.Config {

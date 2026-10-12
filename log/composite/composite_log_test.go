@@ -24,12 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/log/file"
+	"github.com/appital/gofix/log/mongo"
+	"github.com/appital/gofix/log/screen"
+	"github.com/appital/gofix/log/sql"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/log/file"
-	"github.com/quickfixgo/quickfix/log/mongo"
-	"github.com/quickfixgo/quickfix/log/screen"
-	"github.com/quickfixgo/quickfix/log/sql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -38,8 +38,8 @@ import (
 type CompositeLogTestSuite struct {
 	suite.Suite
 	sqlLogRootPath string
-	settings       *quickfix.Settings
-	sessionID      quickfix.SessionID
+	settings       *gofix.Settings
+	sessionID      gofix.SessionID
 }
 
 func (suite *CompositeLogTestSuite) SetupTest() {
@@ -52,7 +52,7 @@ func (suite *CompositeLogTestSuite) SetupTest() {
 	mongoReplicaSet := "replicaset"
 
 	// create settings
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
 	logPath := path.Join(os.TempDir(), fmt.Sprintf("TestLogStore-%d", os.Getpid()))
 	suite.sqlLogRootPath = path.Join(os.TempDir(), fmt.Sprintf("SQLLogTestSuite-%d", os.Getpid()))
 	err := os.MkdirAll(suite.sqlLogRootPath, os.ModePerm)
@@ -60,7 +60,7 @@ func (suite *CompositeLogTestSuite) SetupTest() {
 	sqlDriver := "sqlite3"
 	sqlDsn := path.Join(suite.sqlLogRootPath, fmt.Sprintf("%d.db", time.Now().UnixNano()))
 
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 MongoLogConnection=%s
 MongoLogDatabase=%s
@@ -85,7 +85,7 @@ func (suite *CompositeLogTestSuite) TestCreateLogNoSession() {
 	mngoLogFactory := mongo.NewLogFactory(suite.settings)
 	sqlLogFactory := sql.NewLogFactory(suite.settings)
 	// create log
-	_, err := NewLogFactory([]quickfix.LogFactory{mngoLogFactory, sqlLogFactory}).Create()
+	_, err := NewLogFactory([]gofix.LogFactory{mngoLogFactory, sqlLogFactory}).Create()
 	require.Nil(suite.T(), err)
 }
 
@@ -96,7 +96,7 @@ func (suite *CompositeLogTestSuite) TestCreateLogSession() {
 	require.Nil(suite.T(), err)
 
 	// create log
-	_, err = NewLogFactory([]quickfix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID)
+	_, err = NewLogFactory([]gofix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID)
 	require.Nil(suite.T(), err)
 }
 
@@ -129,9 +129,9 @@ type recordingLogFactory struct {
 	log *recordingLog
 }
 
-func (f recordingLogFactory) Create() (quickfix.Log, error) { return f.log, nil }
+func (f recordingLogFactory) Create() (gofix.Log, error) { return f.log, nil }
 
-func (f recordingLogFactory) CreateSessionLog(quickfix.SessionID) (quickfix.Log, error) {
+func (f recordingLogFactory) CreateSessionLog(gofix.SessionID) (gofix.Log, error) {
 	return f.log, nil
 }
 
@@ -150,7 +150,7 @@ func TestCompositeLogOnEventfExpandsFormatArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			first, second := &recordingLog{}, &recordingLog{}
-			l, err := NewLogFactory([]quickfix.LogFactory{
+			l, err := NewLogFactory([]gofix.LogFactory{
 				recordingLogFactory{first},
 				recordingLogFactory{second},
 			}).Create()

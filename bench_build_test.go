@@ -13,13 +13,13 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // BenchmarkBuild serialises an already-populated Message. This is the outbound

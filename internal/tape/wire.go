@@ -38,14 +38,14 @@ var DefaultSession = Session{
 // Wire renders an Entry to canonical FIX bytes with a correct BodyLength (9)
 // and CheckSum (10).
 //
-// This encoder is deliberately independent of quickfix's own Message.build(),
+// This encoder is deliberately independent of gofix's own Message.build(),
 // so that parser benchmarks measure the parser against a fixed external
 // reference rather than against whatever the builder happens to emit. It also
 // serves as an oracle for the round-trip test.
 func Wire(e Entry, seq int, sess Session, sendingTime time.Time) []byte {
 	// Body: everything after 9=..<SOH> and before 10=..<SOH>.
 	//
-	// Fields are emitted in quickfix's canonical order - MsgType first, then
+	// Fields are emitted in gofix's canonical order - MsgType first, then
 	// header tags ascending, then body items ascending with each repeating
 	// group rendered whole at its count tag's position. Matching the engine's
 	// own ordering lets the round-trip test compare Wire output against
@@ -97,7 +97,7 @@ type wireItem struct {
 }
 
 // bodyItems returns an Entry's body fields and groups interleaved in ascending
-// tag order, which is quickfix's normalFieldOrder.
+// tag order, which is gofix's normalFieldOrder.
 func bodyItems(e Entry) []wireItem {
 	items := make([]wireItem, 0, len(e.Body)+len(e.Groups))
 	for _, f := range e.Body {
@@ -144,7 +144,7 @@ func appendGroup(dst []byte, g Group) []byte {
 	for i, entry := range g.Entries {
 		// Emit in template order so the delimiter tag leads each entry and
 		// nested groups land at their count tag's template position - which is
-		// where quickfix's own group writer puts them.
+		// where gofix's own group writer puts them.
 		emitted := 0
 		for _, tag := range g.Template {
 			if nested, ok := nestedEntryGroup(g, i, tag); ok {

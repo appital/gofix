@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -32,8 +32,8 @@ import (
 type MongoLogTestSuite struct {
 	suite.Suite
 	log       *mongoLog
-	settings  *quickfix.Settings
-	sessionID quickfix.SessionID
+	settings  *gofix.Settings
+	sessionID gofix.SessionID
 }
 
 func (suite *MongoLogTestSuite) SetupTest() {
@@ -46,8 +46,8 @@ func (suite *MongoLogTestSuite) SetupTest() {
 	mongoReplicaSet := "replicaset"
 
 	// create settings
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 MongoLogConnection=%s
 MongoLogDatabase=%s

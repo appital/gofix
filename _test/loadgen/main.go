@@ -1,4 +1,4 @@
-// Command loadgen drives a quickfix acceptor and initiator against each other
+// Command loadgen drives a gofix acceptor and initiator against each other
 // over loopback TCP at a controlled rate, and reports throughput, round-trip
 // latency and allocation per message.
 //
@@ -27,8 +27,8 @@ import (
 	// Registers the pprof handlers on http.DefaultServeMux.
 	_ "net/http/pprof"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/internal/tape"
 )
 
 type options struct {
@@ -153,7 +153,7 @@ func run(opts options) error {
 	var wg sync.WaitGroup
 	for _, sessionID := range sessionIDs {
 		wg.Add(1)
-		go func(sessionID quickfix.SessionID) {
+		go func(sessionID gofix.SessionID) {
 			defer wg.Done()
 			pump(client, sessionID, entries, opts.rate, stop)
 		}(sessionID)
@@ -237,7 +237,7 @@ func run(opts options) error {
 }
 
 // pump sends orders on one session at the requested rate until stopped.
-func pump(client *clientApp, sessionID quickfix.SessionID, entries []tape.Entry, rate int, stop <-chan struct{}) {
+func pump(client *clientApp, sessionID gofix.SessionID, entries []tape.Entry, rate int, stop <-chan struct{}) {
 	var interval time.Duration
 	if rate > 0 {
 		interval = time.Second / time.Duration(rate)
@@ -261,7 +261,7 @@ func pump(client *clientApp, sessionID quickfix.SessionID, entries []tape.Entry,
 		// measured round trip includes the engine's own outbound work.
 		atomic.StoreInt64(&client.sendNanos[seq&client.ringMask], time.Now().UnixNano())
 
-		if err := quickfix.SendToTarget(msg, sessionID); err != nil {
+		if err := gofix.SendToTarget(msg, sessionID); err != nil {
 			return
 		}
 		if client.measuring.Load() {
@@ -283,8 +283,8 @@ func pump(client *clientApp, sessionID quickfix.SessionID, entries []tape.Entry,
 	}
 }
 
-func awaitLogon(client *clientApp, want int, timeout time.Duration) ([]quickfix.SessionID, error) {
-	var ids []quickfix.SessionID
+func awaitLogon(client *clientApp, want int, timeout time.Duration) ([]gofix.SessionID, error) {
+	var ids []gofix.SessionID
 	deadline := time.After(timeout)
 
 	for len(ids) < want {

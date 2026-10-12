@@ -9,9 +9,9 @@ import (
 	"runtime/trace"
 	"strconv"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
-	"github.com/quickfixgo/quickfix/store/file"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
+	"github.com/appital/gofix/store/file"
 )
 
 const (
@@ -19,9 +19,9 @@ const (
 	clientPrefix = "LOADGEN_CLIENT_"
 )
 
-func sessionSettings(opts options, i int, sender, target string) *quickfix.SessionSettings {
-	s := quickfix.NewSessionSettings()
-	s.Set(config.BeginString, quickfix.BeginStringFIX44)
+func sessionSettings(opts options, i int, sender, target string) *gofix.SessionSettings {
+	s := gofix.NewSessionSettings()
+	s.Set(config.BeginString, gofix.BeginStringFIX44)
 	s.Set(config.SenderCompID, sender)
 	s.Set(config.TargetCompID, target)
 	s.Set(config.HeartBtInt, "30")
@@ -53,8 +53,8 @@ func dataDictionaryPath() string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "spec", "FIX44.xml")
 }
 
-func startAcceptor(opts options, port int, app quickfix.Application, counter *byteCounter) (*quickfix.Acceptor, error) {
-	settings := quickfix.NewSettings()
+func startAcceptor(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Acceptor, error) {
+	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketAcceptPort, strconv.Itoa(port))
 	settings.GlobalSettings().Set(config.SocketAcceptHost, "127.0.0.1")
 
@@ -70,7 +70,7 @@ func startAcceptor(opts options, port int, app quickfix.Application, counter *by
 		return nil, err
 	}
 
-	acceptor, err := quickfix.NewAcceptor(app, storeFactory, settings, countingLogFactory{counter})
+	acceptor, err := gofix.NewAcceptor(app, storeFactory, settings, countingLogFactory{counter})
 	if err != nil {
 		return nil, fmt.Errorf("creating acceptor: %w", err)
 	}
@@ -81,8 +81,8 @@ func startAcceptor(opts options, port int, app quickfix.Application, counter *by
 	return acceptor, nil
 }
 
-func startInitiator(opts options, port int, app quickfix.Application, counter *byteCounter) (*quickfix.Initiator, error) {
-	settings := quickfix.NewSettings()
+func startInitiator(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Initiator, error) {
+	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketConnectHost, "127.0.0.1")
 	settings.GlobalSettings().Set(config.SocketConnectPort, strconv.Itoa(port))
 	settings.GlobalSettings().Set(config.ReconnectInterval, "1")
@@ -99,7 +99,7 @@ func startInitiator(opts options, port int, app quickfix.Application, counter *b
 		return nil, err
 	}
 
-	initiator, err := quickfix.NewInitiator(app, storeFactory, settings, countingLogFactory{counter})
+	initiator, err := gofix.NewInitiator(app, storeFactory, settings, countingLogFactory{counter})
 	if err != nil {
 		return nil, fmt.Errorf("creating initiator: %w", err)
 	}
@@ -112,13 +112,13 @@ func startInitiator(opts options, port int, app quickfix.Application, counter *b
 
 func clientCompID(i int) string { return clientPrefix + strconv.Itoa(i) }
 
-func storeFactoryFor(opts options, settings *quickfix.Settings, side string) (quickfix.MessageStoreFactory, error) {
+func storeFactoryFor(opts options, settings *gofix.Settings, side string) (gofix.MessageStoreFactory, error) {
 	switch opts.store {
 	case "memory", "":
-		return quickfix.NewMemoryStoreFactory(), nil
+		return gofix.NewMemoryStoreFactory(), nil
 
 	case "file":
-		dir, err := os.MkdirTemp("", "quickfix-loadgen-"+side+"-")
+		dir, err := os.MkdirTemp("", "gofix-loadgen-"+side+"-")
 		if err != nil {
 			return nil, fmt.Errorf("creating file store dir: %w", err)
 		}

@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -27,7 +27,7 @@ import (
 
 type StoreTestSuite struct {
 	suite.Suite
-	MsgStore quickfix.MessageStore
+	MsgStore gofix.MessageStore
 }
 
 func (s *StoreTestSuite) TestMessageStoreSetNextMsgSeqNumRefreshIncrNextMsgSeqNum() {

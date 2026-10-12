@@ -3,7 +3,7 @@ package main
 import (
 	"sync/atomic"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 )
 
 // byteCounter tallies wire volume in both directions. It is attached as the
@@ -51,8 +51,8 @@ func (l countingLog) OnEventf(string, ...interface{}) {}
 
 type countingLogFactory struct{ c *byteCounter }
 
-func (f countingLogFactory) Create() (quickfix.Log, error) { return countingLog{f.c}, nil }
+func (f countingLogFactory) Create() (gofix.Log, error) { return countingLog{f.c}, nil }
 
-func (f countingLogFactory) CreateSessionLog(quickfix.SessionID) (quickfix.Log, error) {
+func (f countingLogFactory) CreateSessionLog(gofix.SessionID) (gofix.Log, error) {
 	return countingLog{f.c}, nil
 }

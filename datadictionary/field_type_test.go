@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
+	"github.com/appital/gofix/datadictionary"
 )
 
 func TestNewFieldType(t *testing.T) {

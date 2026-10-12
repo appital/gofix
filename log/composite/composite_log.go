@@ -16,11 +16,11 @@
 package composite
 
 import (
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 )
 
 type compositeLog struct {
-	logs []quickfix.Log
+	logs []gofix.Log
 }
 
 func (l compositeLog) OnIncoming(s []byte) {
@@ -48,11 +48,11 @@ func (l compositeLog) OnEventf(format string, a ...interface{}) {
 }
 
 type compositeLogFactory struct {
-	logFactories []quickfix.LogFactory
+	logFactories []gofix.LogFactory
 }
 
-func (clf compositeLogFactory) Create() (quickfix.Log, error) {
-	logs := []quickfix.Log{}
+func (clf compositeLogFactory) Create() (gofix.Log, error) {
+	logs := []gofix.Log{}
 	for _, lf := range clf.logFactories {
 		log, err := lf.Create()
 		if err != nil {
@@ -63,8 +63,8 @@ func (clf compositeLogFactory) Create() (quickfix.Log, error) {
 	return compositeLog{logs}, nil
 }
 
-func (clf compositeLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (quickfix.Log, error) {
-	logs := []quickfix.Log{}
+func (clf compositeLogFactory) CreateSessionLog(sessionID gofix.SessionID) (gofix.Log, error) {
+	logs := []gofix.Log{}
 	for _, lf := range clf.logFactories {
 		log, err := lf.CreateSessionLog(sessionID)
 		if err != nil {
@@ -76,6 +76,6 @@ func (clf compositeLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (q
 }
 
 // NewLogFactory creates an instance of LogFactory that writes messages and events to stdout.
-func NewLogFactory(logfactories []quickfix.LogFactory) quickfix.LogFactory {
+func NewLogFactory(logfactories []gofix.LogFactory) gofix.LogFactory {
 	return compositeLogFactory{logfactories}
 }

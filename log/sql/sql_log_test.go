@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/appital/gofix"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/quickfixgo/quickfix"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -37,8 +37,8 @@ type SQLLogTestSuite struct {
 	sqlLogRootPath string
 	log            *sqlLog
 
-	settings  *quickfix.Settings
-	sessionID quickfix.SessionID
+	settings  *gofix.Settings
+	sessionID gofix.SessionID
 }
 
 func (suite *SQLLogTestSuite) SetupTest() {
@@ -61,8 +61,8 @@ func (suite *SQLLogTestSuite) SetupTest() {
 	}
 
 	// create settings
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 SQLLogDriver=%s
 SQLLogDataSourceName=%s

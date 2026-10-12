@@ -13,15 +13,15 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"strconv"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
+	"github.com/appital/gofix/datadictionary"
 
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // BenchmarkRoundTrip is the closest single number to "engine cost per message"

@@ -13,14 +13,14 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/internal/tape"
 )
 
 func readable(b []byte) string { return strings.ReplaceAll(string(b), "\x01", "|") }
