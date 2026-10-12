@@ -15,14 +15,64 @@
 
 package gofix
 
-import "io"
+import (
+	"context"
+	"io"
 
-func writeLoop(connection io.Writer, messageOut chan []byte, log Log) {
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"golang.org/x/time/rate"
+)
+
+const maxBurst = 1
+
+var (
+	outgoingMessageCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gofix",
+		Name:      "outgoing_message_count",
+		Help:      "Count of messages sent inside gofix writeLoop",
+	}, []string{"sessionID"})
+
+	outgoingMessageBytes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gofix",
+		Name:      "outgoing_message_bytes",
+		Help:      "Count of bytes sent inside gofix writeLoop",
+	}, []string{"sessionID"})
+
+	incomingMessageCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gofix",
+		Name:      "incoming_message_count",
+		Help:      "Count of messages received inside gofix readLoop",
+	}, []string{"sessionID"})
+
+	incomingMessageBytes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gofix",
+		Name:      "incoming_message_bytes",
+		Help:      "Count of bytes received inside gofix readLoop",
+	}, []string{"sessionID"})
+)
+
+func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, sessionID string) {
+	limiter := rate.NewLimiter(rate.Limit(maxMessagesPerSecond), maxBurst)
+	ctx := context.Background()
+
 	for {
 		msg, ok := <-messageOut
 		if !ok {
 			return
 		}
+
+		if maxMessagesPerSecond > 0 {
+			err := limiter.Wait(ctx)
+			// if we get an error from the limiter we log, but continue on to
+			// attempt to write the message to the remote party
+			if err != nil {
+				log.OnEvent(err.Error())
+			}
+		}
+
+		outgoingMessageCount.WithLabelValues(sessionID).Inc()
+		outgoingMessageBytes.WithLabelValues(sessionID).Add(float64(len(msg)))
 
 		if _, err := connection.Write(msg); err != nil {
 			log.OnEvent(err.Error())
@@ -30,7 +80,7 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log) {
 	}
 }
 
-func readLoop(parser *parser, msgIn chan fixIn, log Log) {
+func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
 	defer close(msgIn)
 
 	for {
@@ -39,6 +89,10 @@ func readLoop(parser *parser, msgIn chan fixIn, log Log) {
 			log.OnEvent(err.Error())
 			return
 		}
+
+		incomingMessageCount.WithLabelValues(sessionID).Inc()
+		incomingMessageBytes.WithLabelValues(sessionID).Add(float64(msg.Len()))
+
 		msgIn <- fixIn{msg, parser.lastRead}
 	}
 }
