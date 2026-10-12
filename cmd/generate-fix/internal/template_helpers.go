@@ -3,11 +3,11 @@ package internal
 import (
 	"fmt"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
+	"github.com/appital/gofix/datadictionary"
 )
 
-func isDecimalType(quickfixType string) bool {
-	switch quickfixType {
+func isDecimalType(fixType string) bool {
+	switch fixType {
 	case "FIXDecimal", "FIXUDecimal":
 		return true
 	default:
@@ -18,7 +18,7 @@ func isDecimalType(quickfixType string) bool {
 func checkIfDecimalImportRequiredForFields(fTypes []*datadictionary.FieldType) (ok bool, err error) {
 	var t string
 	for _, fType := range fTypes {
-		t, err = quickfixType(fType)
+		t, err = fixType(fType)
 		if err != nil {
 			return
 		}
@@ -34,13 +34,13 @@ func checkIfDecimalImportRequiredForFields(fTypes []*datadictionary.FieldType) (
 func checkIfTimeImportRequiredForFields(fTypes []*datadictionary.FieldType) (ok bool, err error) {
 	var t string
 	for _, fType := range fTypes {
-		t, err = quickfixType(fType)
+		t, err = fixType(fType)
 		if err != nil {
 			return
 		}
 
 		var vt string
-		if vt, err = quickfixValueType(t); err != nil {
+		if vt, err = fixValueType(t); err != nil {
 			return
 		}
 
@@ -59,7 +59,7 @@ func checkFieldDecimalRequired(f *datadictionary.FieldDef) (required bool, err e
 	}
 
 	var t string
-	if t, err = quickfixType(globalType); err != nil {
+	if t, err = fixType(globalType); err != nil {
 		return
 	}
 
@@ -84,12 +84,12 @@ func checkFieldTimeRequired(f *datadictionary.FieldDef) (required bool, err erro
 	}
 
 	var t string
-	if t, err = quickfixType(globalType); err != nil {
+	if t, err = fixType(globalType); err != nil {
 		return
 	}
 
 	var vt string
-	if vt, err = quickfixValueType(t); err != nil {
+	if vt, err = fixValueType(t); err != nil {
 		return
 	}
 
@@ -172,7 +172,7 @@ func checkFieldEnumRequired(f *datadictionary.FieldDef) (required bool, err erro
 
 	if globalType.Enums != nil && 0 < len(globalType.Enums) {
 		var t string
-		if t, err = quickfixType(globalType); err != nil {
+		if t, err = fixType(globalType); err != nil {
 			return
 		}
 		if t != "FIXBoolean" {
@@ -190,8 +190,8 @@ func checkFieldEnumRequired(f *datadictionary.FieldDef) (required bool, err erro
 	return
 }
 
-func quickfixValueType(quickfixType string) (goType string, err error) {
-	switch quickfixType {
+func fixValueType(fixType string) (goType string, err error) {
+	switch fixType {
 	case "FIXString":
 		goType = "string"
 	case "FIXBoolean":
@@ -207,13 +207,13 @@ func quickfixValueType(quickfixType string) (goType string, err error) {
 	case "FIXUDecimal":
 		goType = "udecimal.Decimal"
 	default:
-		err = fmt.Errorf("Unknown QuickFIX Type: %v", quickfixType)
+		err = fmt.Errorf("Unknown QuickFIX Type: %v", fixType)
 	}
 
 	return
 }
 
-func quickfixType(field *datadictionary.FieldType) (quickfixType string, err error) {
+func fixType(field *datadictionary.FieldType) (fixType string, err error) {
 	switch field.Type {
 	case "MULTIPLESTRINGVALUE", "MULTIPLEVALUESTRING":
 		fallthrough
@@ -254,10 +254,10 @@ func quickfixType(field *datadictionary.FieldType) (quickfixType string, err err
 	case "XID", "XIDREF":
 		fallthrough
 	case "STRING":
-		quickfixType = "FIXString"
+		fixType = "FIXString"
 
 	case "BOOLEAN":
-		quickfixType = "FIXBoolean"
+		fixType = "FIXBoolean"
 
 	case "LENGTH":
 		fallthrough
@@ -270,10 +270,10 @@ func quickfixType(field *datadictionary.FieldType) (quickfixType string, err err
 	case "TAGNUM":
 		fallthrough
 	case "INT":
-		quickfixType = "FIXInt"
+		fixType = "FIXInt"
 
 	case "UTCTIMESTAMP":
-		quickfixType = "FIXUTCTimestamp"
+		fixType = "FIXUTCTimestamp"
 
 	case "QTY":
 		fallthrough
@@ -289,11 +289,11 @@ func quickfixType(field *datadictionary.FieldType) (quickfixType string, err err
 		fallthrough
 	case "FLOAT":
 		if *useFloat {
-			quickfixType = "FIXFloat"
+			fixType = "FIXFloat"
 		} else if *useUDecimal {
-			quickfixType = "FIXUDecimal"
+			fixType = "FIXUDecimal"
 		} else {
-			quickfixType = "FIXDecimal"
+			fixType = "FIXDecimal"
 		}
 
 	default:

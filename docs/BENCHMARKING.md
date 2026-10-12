@@ -1,4 +1,4 @@
-# Benchmarking and profiling quickfix
+# Benchmarking and profiling gofix
 
 This repository carries a load-test and profiling harness so that performance
 changes can be argued from measurements rather than from reading the code.
@@ -27,7 +27,7 @@ MarketDataIncrementalRefresh (10–20 entry repeating group with nested
 NoSecurityAltID), 2% Heartbeat. Other mixes: `orderflow`, `marketdata`, `flat`.
 
 `internal/tape` deliberately imports nothing outside the standard library. It
-cannot import `quickfix` (the benchmarks are internal tests, so that would be an
+cannot import `gofix` (the benchmarks are internal tests, so that would be an
 import cycle) and it must not import `gen/…` (a gitignored build artifact). Its
 FIX encoder is written independently of `Message.build()`, which makes it an
 oracle rather than a mirror.

@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/internal/testsuite"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/internal/testsuite"
 	assert2 "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -40,10 +40,10 @@ type FileStoreTestSuite struct {
 func (suite *FileStoreTestSuite) SetupTest() {
 	suite.fileStoreRootPath = path.Join(os.TempDir(), fmt.Sprintf("FileStoreTestSuite-%d", os.Getpid()))
 	fileStorePath := path.Join(suite.fileStoreRootPath, fmt.Sprintf("%d", time.Now().UnixNano()))
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
 
 	// create settings
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 FileStorePath=%s
 

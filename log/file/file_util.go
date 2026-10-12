@@ -20,10 +20,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 )
 
-func sessionIDFilenamePrefix(s quickfix.SessionID) string {
+func sessionIDFilenamePrefix(s gofix.SessionID) string {
 	sender := []string{s.SenderCompID}
 	if s.SenderSubID != "" {
 		sender = append(sender, s.SenderSubID)

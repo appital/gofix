@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/datadictionary"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // The benchmark corpus. Keep these fixed: changing them invalidates every

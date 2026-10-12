@@ -18,8 +18,8 @@ package memory
 import (
 	"testing"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/internal/testsuite"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/internal/testsuite"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -31,7 +31,7 @@ type MemoryStoreTestSuite struct {
 
 func (suite *MemoryStoreTestSuite) SetupTest() {
 	var err error
-	suite.MsgStore, err = quickfix.NewMemoryStoreFactory().Create(quickfix.SessionID{})
+	suite.MsgStore, err = gofix.NewMemoryStoreFactory().Create(gofix.SessionID{})
 	require.Nil(suite.T(), err)
 }
 

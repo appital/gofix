@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quickfixgo/quickfix/config"
-	"github.com/quickfixgo/quickfix/datadictionary"
-	"github.com/quickfixgo/quickfix/internal"
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix/config"
+	"github.com/appital/gofix/datadictionary"
+	"github.com/appital/gofix/internal"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // benchApp is a no-op Application. The testify-based MockApp in quickfix_test.go

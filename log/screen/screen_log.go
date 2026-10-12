@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 )
 
 type screenLog struct {
@@ -47,17 +47,17 @@ func (l screenLog) OnEventf(format string, a ...interface{}) {
 
 type screenLogFactory struct{}
 
-func (screenLogFactory) Create() (quickfix.Log, error) {
+func (screenLogFactory) Create() (gofix.Log, error) {
 	log := screenLog{"GLOBAL"}
 	return log, nil
 }
 
-func (screenLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (quickfix.Log, error) {
+func (screenLogFactory) CreateSessionLog(sessionID gofix.SessionID) (gofix.Log, error) {
 	log := screenLog{sessionID.String()}
 	return log, nil
 }
 
 // NewLogFactory creates an instance of LogFactory that writes messages and events to stdout.
-func NewLogFactory() quickfix.LogFactory {
+func NewLogFactory() gofix.LogFactory {
 	return screenLogFactory{}
 }

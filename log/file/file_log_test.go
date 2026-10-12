@@ -23,12 +23,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/quickfixgo/quickfix"
+	"github.com/appital/gofix"
 )
 
 func TestFileLog_NewFileLogFactory(t *testing.T) {
 
-	_, err := NewLogFactory(quickfix.NewSettings())
+	_, err := NewLogFactory(gofix.NewSettings())
 
 	if err == nil {
 		t.Error("Should expect error when settings have no file log path")
@@ -54,7 +54,7 @@ TargetCompID=ARCA
 SessionQualifier=BS
 `
 	stringReader := strings.NewReader(cfg)
-	settings, _ := quickfix.ParseSettings(stringReader)
+	settings, _ := gofix.ParseSettings(stringReader)
 
 	factory, err := NewLogFactory(settings)
 
@@ -70,7 +70,7 @@ SessionQualifier=BS
 type fileLogHelper struct {
 	LogPath string
 	Prefix  string
-	Log     quickfix.Log
+	Log     gofix.Log
 }
 
 func newFileLogHelper(t *testing.T) *fileLogHelper {

@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bufio"
@@ -27,7 +27,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 )
 
 // Acceptor accepts connections from FIX clients and manages the associated sessions.

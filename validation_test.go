@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/quickfixgo/quickfix/datadictionary"
+	"github.com/appital/gofix/datadictionary"
 )
 
 type validateTest struct {

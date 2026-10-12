@@ -20,11 +20,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/appital/gofix"
 	"github.com/pkg/errors"
-	"github.com/quickfixgo/quickfix"
 )
 
-func createFilenamePrefix(s quickfix.SessionID) string {
+func createFilenamePrefix(s gofix.SessionID) string {
 	sender := []string{s.SenderCompID}
 	if s.SenderSubID != "" {
 		sender = append(sender, s.SenderSubID)

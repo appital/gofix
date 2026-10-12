@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 // Tag is a typed int representing a FIX tag.
 type Tag int

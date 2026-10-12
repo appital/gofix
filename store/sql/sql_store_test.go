@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/internal/testsuite"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/internal/testsuite"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -58,8 +58,8 @@ func (suite *SQLStoreTestSuite) SetupTest() {
 	}
 
 	// create settings
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 SQLStoreDriver=%s
 SQLStoreDataSourceName=%s
@@ -105,8 +105,8 @@ func (suite *SQLStoreTestSuite) TestStoreTableRenameOverride() {
 	require.NoError(suite.T(), err)
 
 	// Set config to use renamed tables
-	sessionID := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	settings, err := quickfix.ParseSettings(strings.NewReader(fmt.Sprintf(`
+	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
 SQLStoreDriver=%s
 SQLStoreDataSourceName=%s

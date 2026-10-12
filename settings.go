@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 )
 
 // The Settings type represents a collection of global and session settings.

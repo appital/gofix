@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"strings"
@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 )
 
 func TestSettings_New(t *testing.T) {

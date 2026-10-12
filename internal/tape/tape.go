@@ -17,9 +17,9 @@
 // messages for benchmarking and load testing.
 //
 // The package is deliberately dependency-free: it imports nothing outside the
-// standard library, and in particular it does not import quickfix itself. The
-// quickfix benchmarks are internal tests (package quickfix), so importing
-// quickfix here would create an import cycle. It also avoids the generated
+// standard library, and in particular it does not import gofix itself. The
+// gofix benchmarks are internal tests (package gofix), so importing
+// gofix here would create an import cycle. It also avoids the generated
 // gen/... packages, which are gitignored build artifacts.
 //
 // Consumers receive plain tag/value data plus a canonical wire encoding, and

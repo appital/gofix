@@ -26,18 +26,18 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 type mongoLogFactory struct {
-	settings              *quickfix.Settings
+	settings              *gofix.Settings
 	messagesLogCollection string
 	eventLogCollection    string
 }
 
 type mongoLog struct {
-	sessionID             quickfix.SessionID
+	sessionID             gofix.SessionID
 	mongoURL              string
 	mongoDatabase         string
 	db                    *mongo.Client
@@ -47,12 +47,12 @@ type mongoLog struct {
 }
 
 // NewLogFactory returns a mongo-based implementation of LogFactory.
-func NewLogFactory(settings *quickfix.Settings) quickfix.LogFactory {
+func NewLogFactory(settings *gofix.Settings) gofix.LogFactory {
 	return NewLogFactoryPrefixed(settings, "")
 }
 
 // NewLogFactoryPrefixed returns a mongo-based implementation of LogFactory, with prefix on collections.
-func NewLogFactoryPrefixed(settings *quickfix.Settings, collectionsPrefix string) quickfix.LogFactory {
+func NewLogFactoryPrefixed(settings *gofix.Settings, collectionsPrefix string) gofix.LogFactory {
 	return mongoLogFactory{
 		settings:              settings,
 		messagesLogCollection: collectionsPrefix + "messages_log",
@@ -61,7 +61,7 @@ func NewLogFactoryPrefixed(settings *quickfix.Settings, collectionsPrefix string
 }
 
 // Create creates a new mongo implementation of the Log interface.
-func (f mongoLogFactory) Create() (l quickfix.Log, err error) {
+func (f mongoLogFactory) Create() (l gofix.Log, err error) {
 	globalSettings := f.settings.GlobalSettings()
 
 	mongoConnectionURL, err := globalSettings.Setting(config.MongoLogConnection)
@@ -76,11 +76,11 @@ func (f mongoLogFactory) Create() (l quickfix.Log, err error) {
 	// Optional.
 	mongoReplicaSet, _ := globalSettings.Setting(config.MongoLogReplicaSet)
 
-	return newmongoLog(quickfix.SessionID{}, mongoConnectionURL, mongoDatabase, mongoReplicaSet, f.messagesLogCollection, f.eventLogCollection)
+	return newmongoLog(gofix.SessionID{}, mongoConnectionURL, mongoDatabase, mongoReplicaSet, f.messagesLogCollection, f.eventLogCollection)
 }
 
 // CreateSessionLog creates a new mongo implementation of the Log interface.
-func (f mongoLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (l quickfix.Log, err error) {
+func (f mongoLogFactory) CreateSessionLog(sessionID gofix.SessionID) (l gofix.Log, err error) {
 	globalSettings := f.settings.GlobalSettings()
 	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
 
@@ -107,7 +107,7 @@ func (f mongoLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (l quick
 	return newmongoLog(sessionID, mongoConnectionURL, mongoDatabase, mongoReplicaSet, f.messagesLogCollection, f.eventLogCollection)
 }
 
-func newmongoLog(sessionID quickfix.SessionID, mongoURL, mongoDatabase, mongoReplicaSet, messagesLogCollection, eventLogCollection string) (l *mongoLog, err error) {
+func newmongoLog(sessionID gofix.SessionID, mongoURL, mongoDatabase, mongoReplicaSet, messagesLogCollection, eventLogCollection string) (l *mongoLog, err error) {
 
 	allowTransactions := len(mongoReplicaSet) > 0
 	l = &mongoLog{
@@ -145,7 +145,7 @@ func (l mongoLog) OnEventf(format string, v ...interface{}) {
 	l.insert(l.eventLogCollection, []byte(fmt.Sprintf(format, v...)))
 }
 
-func generateEntry(s *quickfix.SessionID) (entry *entryData) {
+func generateEntry(s *gofix.SessionID) (entry *entryData) {
 	entry = &entryData{
 		BeginString:      s.BeginString,
 		SessionQualifier: s.Qualifier,

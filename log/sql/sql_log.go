@@ -22,16 +22,16 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 type sqlLogFactory struct {
-	settings *quickfix.Settings
+	settings *gofix.Settings
 }
 
 type sqlLog struct {
-	sessionID          quickfix.SessionID
+	sessionID          gofix.SessionID
 	sqlDriver          string
 	sqlDataSourceName  string
 	sqlConnMaxLifetime time.Duration
@@ -60,12 +60,12 @@ func postgresPlaceholder(i int) string {
 }
 
 // NewLogFactory returns a sql-based implementation of LogFactory.
-func NewLogFactory(settings *quickfix.Settings) quickfix.LogFactory {
+func NewLogFactory(settings *gofix.Settings) gofix.LogFactory {
 	return sqlLogFactory{settings: settings}
 }
 
 // Create creates a new SQLLog implementation of the Log interface.
-func (f sqlLogFactory) Create() (log quickfix.Log, err error) {
+func (f sqlLogFactory) Create() (log gofix.Log, err error) {
 	globalSettings := f.settings.GlobalSettings()
 
 	sqlDriver, err := globalSettings.Setting(config.SQLLogDriver)
@@ -84,11 +84,11 @@ func (f sqlLogFactory) Create() (log quickfix.Log, err error) {
 		}
 	}
 
-	return newSQLLog(quickfix.SessionID{}, sqlDriver, sqlDataSourceName, sqlConnMaxLifetime)
+	return newSQLLog(gofix.SessionID{}, sqlDriver, sqlDataSourceName, sqlConnMaxLifetime)
 }
 
 // CreateSessionLog creates a new SQLLog implementation of the Log interface.
-func (f sqlLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (log quickfix.Log, err error) {
+func (f sqlLogFactory) CreateSessionLog(sessionID gofix.SessionID) (log gofix.Log, err error) {
 	globalSettings := f.settings.GlobalSettings()
 	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
 
@@ -119,7 +119,7 @@ func (f sqlLogFactory) CreateSessionLog(sessionID quickfix.SessionID) (log quick
 	return newSQLLog(sessionID, sqlDriver, sqlDataSourceName, sqlConnMaxLifetime)
 }
 
-func newSQLLog(sessionID quickfix.SessionID, driver string, dataSourceName string, connMaxLifetime time.Duration) (l *sqlLog, err error) {
+func newSQLLog(sessionID gofix.SessionID, driver string, dataSourceName string, connMaxLifetime time.Duration) (l *sqlLog, err error) {
 	l = &sqlLog{
 		sessionID:          sessionID,
 		sqlDriver:          driver,

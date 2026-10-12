@@ -23,8 +23,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 const (
@@ -33,12 +33,12 @@ const (
 )
 
 type sqlStoreFactory struct {
-	settings *quickfix.Settings
+	settings *gofix.Settings
 }
 
 type sqlStore struct {
-	sessionID          quickfix.SessionID
-	cache              quickfix.MessageStore
+	sessionID          gofix.SessionID
+	cache              gofix.MessageStore
 	sqlDriver          string
 	sqlDataSourceName  string
 	sqlConnMaxLifetime time.Duration
@@ -80,12 +80,12 @@ func postgresPlaceholder(i int) string {
 }
 
 // NewStoreFactory returns a sql-based implementation of MessageStoreFactory.
-func NewStoreFactory(settings *quickfix.Settings) quickfix.MessageStoreFactory {
+func NewStoreFactory(settings *gofix.Settings) gofix.MessageStoreFactory {
 	return sqlStoreFactory{settings: settings}
 }
 
 // Create creates a new SQLStore implementation of the MessageStore interface.
-func (f sqlStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickfix.MessageStore, err error) {
+func (f sqlStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.MessageStore, err error) {
 	globalSettings := f.settings.GlobalSettings()
 	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
 
@@ -128,9 +128,9 @@ func (f sqlStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickfix
 	return newSQLStore(sessionID, sqlDriver, sqlDataSourceName, messagesTableName, sessionsTableName, sqlConnMaxLifetime)
 }
 
-func newSQLStore(sessionID quickfix.SessionID, driver, dataSourceName, messagesTableName, sessionsTableName string, connMaxLifetime time.Duration) (store *sqlStore, err error) {
+func newSQLStore(sessionID gofix.SessionID, driver, dataSourceName, messagesTableName, sessionsTableName string, connMaxLifetime time.Duration) (store *sqlStore, err error) {
 
-	memStore, memErr := quickfix.NewMemoryStoreFactory().Create(sessionID)
+	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
 	if memErr != nil {
 		err = errors.Wrap(memErr, "cache creation")
 		return

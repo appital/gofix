@@ -13,7 +13,7 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"crypto/tls"
@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix/config"
 )
 
 func loadTLSConfig(settings *SessionSettings) (*tls.Config, error) {

@@ -5,19 +5,19 @@ clean:
 	rm -rf gen
 
 generate: clean
-	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/quickfixgo/quickfix/gen ../spec/*.xml
+	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/appital/gofix/gen ../spec/*.xml
 
 generate-udecimal: clean
-	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -use-udecimal=true -pkg-root=github.com/quickfixgo/quickfix/gen ../spec/*.xml
+	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -use-udecimal=true -pkg-root=github.com/appital/gofix/gen ../spec/*.xml
 
 fmt:
 	gofmt -l -w -s $(shell find . -type f -name '*.go')
 
 vet:
-	go vet `go list ./... | grep -v quickfix/gen`
+	go vet `go list ./... | grep -v gofix/gen`
 
 test: 
-	MONGODB_TEST_CXN=mongodb://db:27017 go test -v -cover `go list ./... | grep -v quickfix/gen`
+	MONGODB_TEST_CXN=mongodb://db:27017 go test -v -cover `go list ./... | grep -v gofix/gen`
 
 linters-install:
 	@golangci-lint --version >/dev/null 2>&1 || { \
@@ -155,15 +155,15 @@ build-src:
 build: build-src build-test-srv
 
 test-ci:
-	go test -v -cover `go list ./... | grep -v quickfix/gen`
+	go test -v -cover `go list ./... | grep -v gofix/gen`
 
 test-ci-nodb:
-	go test -cover `go list ./... | grep -v quickfix/gen | grep -v -E '/(mongo|sql|composite)$$'`
+	go test -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(mongo|sql|composite)$$'`
 
 generate-ci: clean
-	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/quickfixgo/quickfix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
+	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/appital/gofix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
 
 generate-ci-udecimal: clean
-	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -use-udecimal=true -pkg-root=github.com/quickfixgo/quickfix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
+	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -use-udecimal=true -pkg-root=github.com/appital/gofix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
 
 # ---------------------------------------------------------------

@@ -1,14 +1,14 @@
 /*
 Package config declares settings for configuring QuickFIX/Go.
 
-A quickfix acceptor or initiator can maintain multiple FIX
+A gofix acceptor or initiator can maintain multiple FIX
 sessions. A FIX session is defined in QuickFIX as a unique
 combination of a BeginString (the FIX version number), a
 SenderCompID (your ID), and a TargetCompID (the
 ID of your counterparty). A SessionQualifier can also be
 used in rare cases to disambiguate otherwise identical sessions.
 
-The quickfix.ParseSettings(reader io.Reader) func will pull settings
+The gofix.ParseSettings(reader io.Reader) func will pull settings
 out of any stream, most commonly, a file stream.
 If you decide to write your own components,
 (storage for a particular database, a new kind of connector
@@ -873,7 +873,7 @@ const (
 
 	// FileLogPath sets the directory path in which to write log files to.
 	// This will create the directory path if it does not already exist.
-	// FileLogPath is only relevant if also using quickfix.NewFileLogFactory(..) in code
+	// FileLogPath is only relevant if also using gofix.NewFileLogFactory(..) in code
 	// when creating your LogFactory for your initiator or acceptor.
 	//
 	// Required: No

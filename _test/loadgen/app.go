@@ -7,13 +7,13 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/gen/enum"
-	"github.com/quickfixgo/quickfix/gen/field"
-	"github.com/quickfixgo/quickfix/gen/fix44/executionreport"
-	"github.com/quickfixgo/quickfix/gen/fix44/newordersingle"
-	"github.com/quickfixgo/quickfix/gen/tag"
-	"github.com/quickfixgo/quickfix/internal/tape"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/gen/enum"
+	"github.com/appital/gofix/gen/field"
+	"github.com/appital/gofix/gen/fix44/executionreport"
+	"github.com/appital/gofix/gen/fix44/newordersingle"
+	"github.com/appital/gofix/gen/tag"
+	"github.com/appital/gofix/internal/tape"
 )
 
 // serverApp is the acceptor side: it receives orders and answers each one with
@@ -24,27 +24,27 @@ type serverApp struct {
 	sent     atomic.Uint64
 	errors   atomic.Uint64
 
-	router *quickfix.MessageRouter
+	router *gofix.MessageRouter
 }
 
 func newServerApp() *serverApp {
-	a := &serverApp{router: quickfix.NewMessageRouter()}
-	a.router.AddRoute(quickfix.BeginStringFIX44, "D", a.onNewOrderSingle)
+	a := &serverApp{router: gofix.NewMessageRouter()}
+	a.router.AddRoute(gofix.BeginStringFIX44, "D", a.onNewOrderSingle)
 	return a
 }
 
-func (a *serverApp) OnCreate(quickfix.SessionID)                   {}
-func (a *serverApp) OnLogon(quickfix.SessionID)                    {}
-func (a *serverApp) OnLogout(quickfix.SessionID)                   {}
-func (a *serverApp) ToAdmin(*quickfix.Message, quickfix.SessionID) {}
+func (a *serverApp) OnCreate(gofix.SessionID)                {}
+func (a *serverApp) OnLogon(gofix.SessionID)                 {}
+func (a *serverApp) OnLogout(gofix.SessionID)                {}
+func (a *serverApp) ToAdmin(*gofix.Message, gofix.SessionID) {}
 
-func (a *serverApp) ToApp(*quickfix.Message, quickfix.SessionID) error { return nil }
+func (a *serverApp) ToApp(*gofix.Message, gofix.SessionID) error { return nil }
 
-func (a *serverApp) FromAdmin(*quickfix.Message, quickfix.SessionID) quickfix.MessageRejectError {
+func (a *serverApp) FromAdmin(*gofix.Message, gofix.SessionID) gofix.MessageRejectError {
 	return nil
 }
 
-func (a *serverApp) FromApp(msg *quickfix.Message, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+func (a *serverApp) FromApp(msg *gofix.Message, sessionID gofix.SessionID) gofix.MessageRejectError {
 	a.received.Add(1)
 	return a.router.Route(msg, sessionID)
 }
@@ -54,7 +54,7 @@ var (
 	execPx  = decimal.NewFromFloat(101.25)
 )
 
-func (a *serverApp) onNewOrderSingle(msg *quickfix.Message, sessionID quickfix.SessionID) quickfix.MessageRejectError {
+func (a *serverApp) onNewOrderSingle(msg *gofix.Message, sessionID gofix.SessionID) gofix.MessageRejectError {
 	// Echo the ClOrdID back so the client can match the reply to its send time.
 	clOrdID, err := msg.Body.GetString(tag.ClOrdID)
 	if err != nil {
@@ -87,7 +87,7 @@ func (a *serverApp) onNewOrderSingle(msg *quickfix.Message, sessionID quickfix.S
 		report.SetSymbol(symbol)
 	}
 
-	if sendErr := quickfix.SendToTarget(report, sessionID); sendErr != nil {
+	if sendErr := gofix.SendToTarget(report, sessionID); sendErr != nil {
 		a.errors.Add(1)
 		return nil
 	}
@@ -114,7 +114,7 @@ type clientApp struct {
 	// measuring gates stats collection so warmup traffic is excluded.
 	measuring atomic.Bool
 
-	loggedOn chan quickfix.SessionID
+	loggedOn chan gofix.SessionID
 }
 
 func newClientApp(hist *histogram, ringSize int) *clientApp {
@@ -127,29 +127,29 @@ func newClientApp(hist *histogram, ringSize int) *clientApp {
 		hist:      hist,
 		sendNanos: make([]int64, size),
 		ringMask:  uint64(size - 1),
-		loggedOn:  make(chan quickfix.SessionID, 64),
+		loggedOn:  make(chan gofix.SessionID, 64),
 	}
 }
 
-func (a *clientApp) OnCreate(quickfix.SessionID) {}
+func (a *clientApp) OnCreate(gofix.SessionID) {}
 
-func (a *clientApp) OnLogon(sessionID quickfix.SessionID) {
+func (a *clientApp) OnLogon(sessionID gofix.SessionID) {
 	select {
 	case a.loggedOn <- sessionID:
 	default:
 	}
 }
 
-func (a *clientApp) OnLogout(quickfix.SessionID)                   {}
-func (a *clientApp) ToAdmin(*quickfix.Message, quickfix.SessionID) {}
+func (a *clientApp) OnLogout(gofix.SessionID)                {}
+func (a *clientApp) ToAdmin(*gofix.Message, gofix.SessionID) {}
 
-func (a *clientApp) ToApp(*quickfix.Message, quickfix.SessionID) error { return nil }
+func (a *clientApp) ToApp(*gofix.Message, gofix.SessionID) error { return nil }
 
-func (a *clientApp) FromAdmin(*quickfix.Message, quickfix.SessionID) quickfix.MessageRejectError {
+func (a *clientApp) FromAdmin(*gofix.Message, gofix.SessionID) gofix.MessageRejectError {
 	return nil
 }
 
-func (a *clientApp) FromApp(msg *quickfix.Message, _ quickfix.SessionID) quickfix.MessageRejectError {
+func (a *clientApp) FromApp(msg *gofix.Message, _ gofix.SessionID) gofix.MessageRejectError {
 	if !a.measuring.Load() {
 		return nil
 	}
@@ -180,7 +180,7 @@ func (a *clientApp) FromApp(msg *quickfix.Message, _ quickfix.SessionID) quickfi
 
 // orderFromEntry builds a NewOrderSingle using the generated typed setters, so
 // the loadgen exercises the same construction path an application would.
-func orderFromEntry(e tape.Entry, seq uint64) *quickfix.Message {
+func orderFromEntry(e tape.Entry, seq uint64) *gofix.Message {
 	order := newordersingle.New(
 		field.NewClOrdID(strconv.FormatUint(seq, 10)),
 		field.NewSide(enum.Side_BUY),
@@ -195,7 +195,7 @@ func orderFromEntry(e tape.Entry, seq uint64) *quickfix.Message {
 			// the sequence number so replies can be matched.
 			continue
 		}
-		order.Body.SetString(quickfix.Tag(f.Tag), f.Value)
+		order.Body.SetString(gofix.Tag(f.Tag), f.Value)
 	}
 
 	return order.ToMessage()

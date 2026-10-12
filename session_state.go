@@ -13,13 +13,13 @@
 // Contact ask@quickfixengine.org if any conditions of this licensing
 // are not clear to you.
 
-package quickfix
+package gofix
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/quickfixgo/quickfix/internal"
+	"github.com/appital/gofix/internal"
 )
 
 type stateMachine struct {

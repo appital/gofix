@@ -1,6 +1,6 @@
 # QuickFIX/Go
 
-[![Build Status](https://github.com/quickfixgo/quickfix/workflows/CI/badge.svg)](https://github.com/quickfixgo/quickfix/actions) [![GoDoc](https://godoc.org/github.com/quickfixgo/quickfix?status.png)](https://godoc.org/github.com/quickfixgo/quickfix) [![Go Report Card](https://goreportcard.com/badge/github.com/quickfixgo/quickfix)](https://goreportcard.com/report/github.com/quickfixgo/quickfix)
+[![Build Status](https://github.com/appital/gofix/workflows/CI/badge.svg)](https://github.com/appital/gofix/actions) [![GoDoc](https://godoc.org/github.com/appital/gofix?status.png)](https://godoc.org/github.com/appital/gofix) [![Go Report Card](https://goreportcard.com/badge/github.com/appital/gofix)](https://goreportcard.com/report/github.com/appital/gofix)
 
 Open Source [FIX Protocol](http://www.fixprotocol.org/) library implemented in Go
 
@@ -35,21 +35,21 @@ See v0.9.0 release notes [here](https://github.com/quickfixgo/quickfix/releases/
 With [Go module](https://github.com/golang/go/wiki/Modules) support, simply add the following import
 
 ```
-import "github.com/quickfixgo/quickfix"
+import "github.com/appital/gofix"
 ```
 
 to your code, and then `go [build|run|test]` will automatically fetch the necessary dependencies.
 
-Otherwise, run the following Go command to install the `quickfix` package:
+Otherwise, run the following Go command to install the `gofix` package:
 
 ```sh
-go get -u github.com/quickfixgo/quickfix
+go get -u github.com/appital/gofix
 ```
 
 ## Getting Started
 
 * [QuickFIX User Manual](https://quickfixengine.org/go/documentation/)
-* [Go API Documentation](https://godoc.org/github.com/quickfixgo/quickfix)
+* [Go API Documentation](https://godoc.org/github.com/appital/gofix)
 * See [examples](https://github.com/quickfixgo/examples) for some simple examples of using QuickFIX/Go.
 
 ## FIX Messaging Model

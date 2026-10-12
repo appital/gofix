@@ -25,19 +25,19 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"github.com/quickfixgo/quickfix"
-	"github.com/quickfixgo/quickfix/config"
+	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 type mongoStoreFactory struct {
-	settings           *quickfix.Settings
+	settings           *gofix.Settings
 	messagesCollection string
 	sessionsCollection string
 }
 
 type mongoStore struct {
-	sessionID          quickfix.SessionID
-	cache              quickfix.MessageStore
+	sessionID          gofix.SessionID
+	cache              gofix.MessageStore
 	mongoURL           string
 	mongoDatabase      string
 	db                 *mongo.Client
@@ -47,12 +47,12 @@ type mongoStore struct {
 }
 
 // NewStoreFactory returns a mongo-based implementation of MessageStoreFactory.
-func NewStoreFactory(settings *quickfix.Settings) quickfix.MessageStoreFactory {
+func NewStoreFactory(settings *gofix.Settings) gofix.MessageStoreFactory {
 	return NewStoreFactoryPrefixed(settings, "")
 }
 
 // NewStoreFactoryPrefixed returns a mongo-based implementation of MessageStoreFactory, with prefix on collections.
-func NewStoreFactoryPrefixed(settings *quickfix.Settings, collectionsPrefix string) quickfix.MessageStoreFactory {
+func NewStoreFactoryPrefixed(settings *gofix.Settings, collectionsPrefix string) gofix.MessageStoreFactory {
 	return mongoStoreFactory{
 		settings:           settings,
 		messagesCollection: collectionsPrefix + "messages",
@@ -61,7 +61,7 @@ func NewStoreFactoryPrefixed(settings *quickfix.Settings, collectionsPrefix stri
 }
 
 // Create creates a new MongoStore implementation of the MessageStore interface.
-func (f mongoStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickfix.MessageStore, err error) {
+func (f mongoStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.MessageStore, err error) {
 	globalSettings := f.settings.GlobalSettings()
 	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
 
@@ -88,9 +88,9 @@ func (f mongoStoreFactory) Create(sessionID quickfix.SessionID) (msgStore quickf
 	return newMongoStore(sessionID, mongoConnectionURL, mongoDatabase, mongoReplicaSet, f.messagesCollection, f.sessionsCollection)
 }
 
-func newMongoStore(sessionID quickfix.SessionID, mongoURL, mongoDatabase, mongoReplicaSet, messagesCollection, sessionsCollection string) (store *mongoStore, err error) {
+func newMongoStore(sessionID gofix.SessionID, mongoURL, mongoDatabase, mongoReplicaSet, messagesCollection, sessionsCollection string) (store *mongoStore, err error) {
 
-	memStore, memErr := quickfix.NewMemoryStoreFactory().Create(sessionID)
+	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
 	if memErr != nil {
 		err = errors.Wrap(memErr, "cache creation")
 		return
@@ -123,7 +123,7 @@ func newMongoStore(sessionID quickfix.SessionID, mongoURL, mongoDatabase, mongoR
 	return
 }
 
-func generateMessageFilter(s *quickfix.SessionID) (messageFilter *mongoQuickFixEntryData) {
+func generateMessageFilter(s *gofix.SessionID) (messageFilter *mongoQuickFixEntryData) {
 	messageFilter = &mongoQuickFixEntryData{
 		BeginString:      s.BeginString,
 		SessionQualifier: s.Qualifier,
