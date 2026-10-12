@@ -482,11 +482,10 @@ func (m *Message) reverseRoute() *Message {
 	reverseMsg := NewMessage()
 
 	copyFunc := func(src Tag, dest Tag) {
-		var field FIXString
-		if m.Header.GetField(src, &field) == nil {
-			if len(field) != 0 {
-				reverseMsg.Header.SetField(dest, field)
-			}
+		// SetBytes copies the value, so the reverse message does not share
+		// this message's buffer.
+		if value, err := m.Header.GetBytes(src); err == nil && len(value) != 0 {
+			reverseMsg.Header.SetBytes(dest, value)
 		}
 	}
 
@@ -504,8 +503,7 @@ func (m *Message) reverseRoute() *Message {
 	copyFunc(tagDeliverToSubID, tagOnBehalfOfSubID)
 
 	// Tags added in 4.1.
-	var beginString FIXString
-	if m.Header.GetField(tagBeginString, &beginString) == nil {
+	if beginString, err := m.Header.GetBytes(tagBeginString); err == nil {
 		if string(beginString) != BeginStringFIX40 {
 			copyFunc(tagOnBehalfOfLocationID, tagDeliverToLocationID)
 			copyFunc(tagDeliverToLocationID, tagOnBehalfOfLocationID)

@@ -168,8 +168,8 @@ func BenchmarkExtractField(b *testing.B) {
 }
 
 // BenchmarkGetField measures field access on a parsed message, including the
-// miss path - probing for an absent optional field builds a reject error, so
-// misses are not free.
+// miss path - probing for an absent optional field returns a reject error,
+// which allocates only for tags of 256 and above.
 func BenchmarkGetField(b *testing.B) {
 	c := loadCorpus(b, tape.MixRealistic).subset(tape.MsgTypeExecutionReport)
 

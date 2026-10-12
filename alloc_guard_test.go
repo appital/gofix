@@ -61,3 +61,38 @@ func TestAllocsParseWithDataDictionaryReused(t *testing.T) {
 		i++
 	})
 }
+
+// Probing for an absent field must not pay for a formatted reject error. Tags
+// below 256 box without allocating; larger ones cost one small allocation.
+func TestAllocsFieldMapMiss(t *testing.T) {
+	msg := NewMessage()
+
+	assertAllocs(t, 0, func() {
+		if _, err := msg.Header.GetBytes(tagSenderSubID); err == nil {
+			t.Fatal("expected a miss")
+		}
+	})
+	assertAllocs(t, 1, func() {
+		if _, err := msg.Header.GetBytes(tagDeliverToLocationID); err == nil {
+			t.Fatal("expected a miss")
+		}
+	})
+}
+
+// Reversing the route of a message only pays for the fields it copies; the
+// optional routing fields that are absent cost nothing.
+func TestAllocsReverseRoute(t *testing.T) {
+	msg := NewMessage()
+	msg.Header.SetString(tagBeginString, BeginStringFIX44)
+	msg.Header.SetString(tagSenderCompID, "SENDER")
+	msg.Header.SetString(tagTargetCompID, "TARGET")
+
+	// The floor is what building the reversed header directly costs.
+	floor := testing.AllocsPerRun(100, func() {
+		reversed := NewMessage()
+		reversed.Header.SetBytes(tagTargetCompID, []byte("SENDER"))
+		reversed.Header.SetBytes(tagSenderCompID, []byte("TARGET"))
+		sinkMsg = reversed // Keep the Message on the heap, as reverseRoute's is.
+	})
+	assertAllocs(t, floor, func() { sinkMsg = msg.reverseRoute() })
+}
