@@ -115,20 +115,6 @@ func (m FieldMap) GetField(tag Tag, parser FieldValueReader) MessageRejectError 
 	return nil
 }
 
-// GetField parses of a field with Tag tag. Returned reject may indicate the field is not present, or the field value is invalid.
-func (m FieldMap) getFieldNoLock(tag Tag, parser FieldValueReader) MessageRejectError {
-	f, ok := m.tagLookup[tag]
-	if !ok {
-		return ConditionallyRequiredFieldMissing(tag)
-	}
-
-	if err := parser.Read(f[0].value); err != nil {
-		return IncorrectDataFormatForValue(tag)
-	}
-
-	return nil
-}
-
 // GetBytes is a zero-copy GetField wrapper for []bytes fields.
 func (m FieldMap) GetBytes(tag Tag) ([]byte, MessageRejectError) {
 	m.rwLock.RLock()
@@ -213,15 +199,6 @@ func (m FieldMap) GetTime(tag Tag) (t time.Time, err MessageRejectError) {
 func (m FieldMap) GetString(tag Tag) (string, MessageRejectError) {
 	var val FIXString
 	if err := m.GetField(tag, &val); err != nil {
-		return "", err
-	}
-	return string(val), nil
-}
-
-// GetString is a GetField wrapper for string fields.
-func (m FieldMap) getStringNoLock(tag Tag) (string, MessageRejectError) {
-	var val FIXString
-	if err := m.getFieldNoLock(tag, &val); err != nil {
 		return "", err
 	}
 	return string(val), nil

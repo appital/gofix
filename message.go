@@ -32,6 +32,7 @@ type msgParser struct {
 	msg                     *Message
 	transportDataDictionary *datadictionary.DataDictionary
 	appDataDictionary       *datadictionary.DataDictionary
+	msgDef                  *datadictionary.MessageDef
 	rawBytes                []byte
 	fieldIndex              int
 	parsedFieldBytes        *TagValue
@@ -227,6 +228,12 @@ func doParsing(mp *msgParser) (err error) {
 	}
 	mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
 
+	// Resolve the message definition once, rather than per field.
+	mp.msgDef = nil
+	if mp.appDataDictionary != nil {
+		mp.msgDef = mp.appDataDictionary.Messages[string(mp.parsedFieldBytes.value)]
+	}
+
 	// Start parsing.
 	mp.fieldIndex++
 	xmlDataLen := 0
@@ -253,8 +260,8 @@ func doParsing(mp *msgParser) (err error) {
 		case isTrailerField(mp.parsedFieldBytes.tag, mp.transportDataDictionary):
 			mp.msg.Trailer.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
 			mp.foundTrailer = true
-		case isNumInGroupField(mp.msg, []Tag{mp.parsedFieldBytes.tag}, mp.appDataDictionary):
-			parseGroup(mp, []Tag{mp.parsedFieldBytes.tag})
+		case isNumInGroupField(mp.msgDef, mp.parsedFieldBytes.tag):
+			parseGroup(mp, mp.parsedFieldBytes.tag)
 		default:
 			mp.foundBody = true
 			mp.trailerBytes = mp.rawBytes
@@ -305,10 +312,14 @@ func doParsing(mp *msgParser) (err error) {
 }
 
 // parseGroup iterates through a repeating group to maintain correct order of those fields.
-func parseGroup(mp *msgParser, tags []Tag) {
+func parseGroup(mp *msgParser, groupTag Tag) {
 	mp.foundBody = true
 	dm := mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]
-	fields := getGroupFields(mp.msg, tags, mp.appDataDictionary)
+
+	// Group nesting is rarely deep, so the tag path normally stays on the stack.
+	var tagBuf [8]Tag
+	tags := append(tagBuf[:0], groupTag)
+	group := getGroupFieldDef(mp.msgDef, tags)
 
 parseLoop:
 	for {
@@ -319,12 +330,12 @@ parseLoop:
 		mp.trailerBytes = mp.rawBytes
 
 		// Is this field a member for the group.
-		if isGroupMember(mp.parsedFieldBytes.tag, fields) {
+		if isGroupMember(mp.parsedFieldBytes.tag, group) {
 			// Is this field a nested repeating group.
-			if isNumInGroupField(mp.msg, append(tags, mp.parsedFieldBytes.tag), mp.appDataDictionary) {
+			if nested := getGroupFieldDef(mp.msgDef, append(tags, mp.parsedFieldBytes.tag)); nested != nil {
 				dm = append(dm, *mp.parsedFieldBytes)
 				tags = append(tags, mp.parsedFieldBytes.tag)
-				fields = getGroupFields(mp.msg, tags, mp.appDataDictionary)
+				group = nested
 				continue
 			}
 			// Add the field member to the group.
@@ -346,22 +357,21 @@ parseLoop:
 			break
 		} else {
 			// Found a body field outside the group.
-			searchTags := []Tag{mp.parsedFieldBytes.tag}
 			// Is this a new group not inside the existing group.
-			if isNumInGroupField(mp.msg, searchTags, mp.appDataDictionary) {
+			if isNumInGroupField(mp.msgDef, mp.parsedFieldBytes.tag) {
 				// Add the current repeating group.
 				mp.msg.Body.add(dm)
 				// Cycle again with the new group.
 				dm = mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]
-				fields = getGroupFields(mp.msg, searchTags, mp.appDataDictionary)
+				group = mp.msgDef.Fields[int(mp.parsedFieldBytes.tag)]
 				continue
 			}
 			// The tag isn't a member of the current group. Walk up: if an
 			// ancestor group includes it, resume there; otherwise it's body-level.
 			for len(tags) > 1 {
 				tags = tags[:len(tags)-1]
-				fields = getGroupFields(mp.msg, tags, mp.appDataDictionary)
-				if isGroupMember(mp.parsedFieldBytes.tag, fields) {
+				group = getGroupFieldDef(mp.msgDef, tags)
+				if isGroupMember(mp.parsedFieldBytes.tag, group) {
 					dm = append(dm, *mp.parsedFieldBytes)
 					continue parseLoop
 				}
@@ -376,80 +386,56 @@ parseLoop:
 	}
 }
 
-// isNumInGroupField evaluates if this tag is the start of a repeating group.
-// tags slice will contain multiple tags if the tag in question is found while processing a group already.
-func isNumInGroupField(msg *Message, tags []Tag, appDataDictionary *datadictionary.DataDictionary) bool {
-	if appDataDictionary != nil {
-		msgt, err := msg.msgTypeNoLock()
-		if err != nil {
-			return false
-		}
-		mm, ok := appDataDictionary.Messages[msgt]
-		if ok {
-			fields := mm.Fields
-			for idx, tag := range tags {
-				fd, ok := fields[int(tag)]
-				if ok {
-					if idx == len(tags)-1 {
-						if len(fd.Fields) > 0 {
-							return true
-						}
-					} else {
-						// Map nested fields.
-						newFields := make(map[int]*datadictionary.FieldDef)
-						for _, ff := range fd.Fields {
-							newFields[ff.Tag()] = ff
-						}
-						fields = newFields
-					}
-				}
-			}
-		}
+// isNumInGroupField evaluates if this tag is the start of a top-level repeating group.
+func isNumInGroupField(msgDef *datadictionary.MessageDef, tag Tag) bool {
+	if msgDef == nil {
+		return false
 	}
-	return false
+	fd, ok := msgDef.Fields[int(tag)]
+	return ok && len(fd.Fields) > 0
 }
 
-// getGroupFields gets the relevant fields for parsing a repeating group if this tag is the start of a repeating group.
+// getGroupFieldDef returns the definition of the repeating group the tags path
+// leads to, or nil if it does not lead to a repeating group.
 // tags slice will contain multiple tags if the tag in question is found while processing a group already.
-func getGroupFields(msg *Message, tags []Tag, appDataDictionary *datadictionary.DataDictionary) (fields []*datadictionary.FieldDef) {
-	if appDataDictionary != nil {
-		msgt, err := msg.msgTypeNoLock()
-		if err != nil {
-			return
-		}
-		mm, ok := appDataDictionary.Messages[msgt]
-		if ok {
-			fields := mm.Fields
-			for idx, tag := range tags {
-				fd, ok := fields[int(tag)]
-				if ok {
-					if idx == len(tags)-1 {
-						if len(fd.Fields) > 0 {
-							return fd.Fields
-						}
-					} else {
-						// Map nested fields.
-						newFields := make(map[int]*datadictionary.FieldDef)
-						for _, ff := range fd.Fields {
-							newFields[ff.Tag()] = ff
-						}
-						fields = newFields
-					}
-				}
-			}
-		}
+func getGroupFieldDef(msgDef *datadictionary.MessageDef, tags []Tag) *datadictionary.FieldDef {
+	if msgDef == nil {
+		return nil
 	}
-	return
+
+	// A nil parent means the lookup is at message level.
+	var parent *datadictionary.FieldDef
+	for idx, tag := range tags {
+		var fd *datadictionary.FieldDef
+		var ok bool
+		if parent == nil {
+			fd, ok = msgDef.Fields[int(tag)]
+		} else {
+			fd, ok = parent.ChildField(int(tag))
+		}
+		if !ok {
+			continue
+		}
+
+		if idx == len(tags)-1 {
+			if len(fd.Fields) > 0 {
+				return fd
+			}
+			return nil
+		}
+		parent = fd
+	}
+
+	return nil
 }
 
 // isGroupMember evaluates if this tag belongs to a repeating group.
-func isGroupMember(tag Tag, fields []*datadictionary.FieldDef) bool {
-	for _, f := range fields {
-		if f.Tag() == int(tag) {
-			return true
-		}
+func isGroupMember(tag Tag, group *datadictionary.FieldDef) bool {
+	if group == nil {
+		return false
 	}
-	return false
+	_, ok := group.ChildField(int(tag))
+	return ok
 }
 
 func isHeaderField(tag Tag, dataDict *datadictionary.DataDictionary) bool {
@@ -481,10 +467,6 @@ func isTrailerField(tag Tag, dataDict *datadictionary.DataDictionary) bool {
 // MsgType returns MsgType (tag 35) field's value.
 func (m *Message) MsgType() (string, MessageRejectError) {
 	return m.Header.GetString(tagMsgType)
-}
-
-func (m *Message) msgTypeNoLock() (string, MessageRejectError) {
-	return m.Header.getStringNoLock(tagMsgType)
 }
 
 // IsMsgTypeOf returns true if the Header contains MsgType (tag 35) field and its value is the specified one.
