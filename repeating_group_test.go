@@ -337,9 +337,9 @@ func TestRepeatingGroup_ResetMultipleCycles(t *testing.T) {
 	rg := NewRepeatingGroup(Tag(50), template)
 
 	// Simulate multiple message parses without reallocation
-	for cycle := 0; cycle < 3; cycle++ {
+	for cycle := range 3 {
 		numGroups := cycle + 1
-		for i := 0; i < numGroups; i++ {
+		for i := range numGroups {
 			g := rg.Add()
 			g.SetField(Tag(1), FIXString(fmt.Sprintf("cycle-%d-group-%d", cycle, i)))
 		}
@@ -347,7 +347,7 @@ func TestRepeatingGroup_ResetMultipleCycles(t *testing.T) {
 		require.Equal(t, numGroups, rg.Len())
 
 		// Verify data
-		for i := 0; i < numGroups; i++ {
+		for i := range numGroups {
 			var v FIXString
 			require.Nil(t, rg.groups[i].GetField(Tag(1), &v))
 			require.Equal(t, fmt.Sprintf("cycle-%d-group-%d", cycle, i), string(v))

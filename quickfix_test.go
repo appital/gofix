@@ -40,7 +40,7 @@ func (s *QuickFIXSuite) MessageType(msgType string, msg *Message) {
 	s.FieldEquals(tagMsgType, msgType, msg.Header)
 }
 
-func (s *QuickFIXSuite) FieldEquals(tag Tag, expectedValue interface{}, fieldMap KnowsFieldMap) {
+func (s *QuickFIXSuite) FieldEquals(tag Tag, expectedValue any, fieldMap KnowsFieldMap) {
 	s.Require().True(fieldMap.Has(tag), "Tag %v not set", tag)
 
 	switch expected := expectedValue.(type) {

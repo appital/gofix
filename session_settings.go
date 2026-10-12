@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 )
@@ -153,17 +154,13 @@ func (s SessionSettings) BoolSetting(setting string) (bool, error) {
 }
 
 func (s *SessionSettings) overlay(overlay *SessionSettings) {
-	for key, val := range overlay.settings {
-		s.settings[key] = val
-	}
+	maps.Copy(s.settings, overlay.settings)
 }
 
 func (s *SessionSettings) clone() *SessionSettings {
 	sClone := NewSessionSettings()
 
-	for k, v := range s.settings {
-		sClone.settings[k] = v
-	}
+	maps.Copy(sClone.settings, s.settings)
 
 	return sClone
 }

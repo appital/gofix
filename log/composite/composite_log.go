@@ -41,7 +41,7 @@ func (l compositeLog) OnEvent(s string) {
 	}
 }
 
-func (l compositeLog) OnEventf(format string, a ...interface{}) {
+func (l compositeLog) OnEventf(format string, a ...any) {
 	for _, log := range l.logs {
 		log.OnEventf(format, a...)
 	}

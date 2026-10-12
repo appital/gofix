@@ -146,7 +146,7 @@ func newBenchSession(tb testing.TB, echo bool, dd *datadictionary.DataDictionary
 	s.messageOut = out
 	s.messageEvent = make(chan bool, 1)
 	s.sessionEvent = make(chan internal.Event, 1)
-	s.admin = make(chan interface{}, 1)
+	s.admin = make(chan any, 1)
 
 	// run() normally creates these; Incoming resets peerTimer unconditionally.
 	s.stateTimer = internal.NewEventTimer(func() {})

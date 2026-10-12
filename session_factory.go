@@ -300,9 +300,9 @@ func (f sessionFactory) newSession(
 					return
 				}
 
-				dayStrs := strings.Split(weekdaysStr, ",")
+				dayStrs := strings.SplitSeq(weekdaysStr, ",")
 
-				for _, dayStr := range dayStrs {
+				for dayStr := range dayStrs {
 					day, ok := dayLookup[dayStr]
 					if !ok {
 						err = IncorrectFormatForSetting{Setting: config.Weekdays, Value: []byte(weekdaysStr)}
@@ -461,7 +461,7 @@ func (f sessionFactory) newSession(
 
 	s.sessionEvent = make(chan internal.Event)
 	s.messageEvent = make(chan bool, 1)
-	s.admin = make(chan interface{})
+	s.admin = make(chan any)
 	s.application = application
 	return
 }

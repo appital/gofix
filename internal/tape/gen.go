@@ -255,7 +255,7 @@ func genMarketDataIncremental(rng *rand.Rand, i int) Entry {
 		Nested:  map[int][]Group{},
 	}
 
-	for e := 0; e < count; e++ {
+	for e := range count {
 		symbol := pick(rng, symbols)
 		group.Entries[e] = []Field{
 			{TagMDUpdateAction, pick(rng, []string{"0", "1", "2"})},
@@ -307,7 +307,7 @@ func genMarketDataSnapshot(rng *rand.Rand, i int) Entry {
 		Entries: make([][]Field, count),
 	}
 
-	for e := 0; e < count; e++ {
+	for e := range count {
 		group.Entries[e] = []Field{
 			{TagMDEntryType, pick(rng, []string{"0", "1"})},
 			{TagMDEntryPx, price(rng)},
@@ -347,7 +347,7 @@ func genParties(rng *rand.Rand, count int) Group {
 		Nested:   map[int][]Group{},
 	}
 
-	for e := 0; e < count; e++ {
+	for e := range count {
 		g.Entries[e] = []Field{
 			{TagPartyID, pick(rng, brokers)},
 			{TagPartyIDSource, "D"},
@@ -375,7 +375,7 @@ func genSecurityAltIDs(rng *rand.Rand, count int, symbol string) Group {
 		Entries:  make([][]Field, count),
 	}
 
-	for e := 0; e < count; e++ {
+	for e := range count {
 		g.Entries[e] = []Field{
 			{TagSecurityAltID, "ALT" + strconv.Itoa(e) + symbol},
 			{TagSecurityAltIDSource, pick(rng, []string{"1", "4", "8"})},

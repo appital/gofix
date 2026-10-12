@@ -394,7 +394,7 @@ func (s *resendInterceptStore) IterateMessages(beginSeqNum, endSeqNum int, cb fu
 
 func (s *InSessionTestSuite) TestFIXMsgInResendRequestLiveMessagesDoNotInterleave() {
 	s.MockApp.On("ToApp").Return(nil)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		s.Require().Nil(s.session.send(s.NewOrderSingle()))
 	}
 	s.NextSenderMsgSeqNum(4)

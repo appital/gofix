@@ -16,6 +16,7 @@
 package tape
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -183,12 +184,7 @@ func nestedEntryGroup(g Group, entry, countTag int) (Group, bool) {
 }
 
 func templateHasTag(template []int, tag int) bool {
-	for _, t := range template {
-		if t == tag {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(template, tag)
 }
 
 func appendField(dst []byte, tag int, value string) []byte {

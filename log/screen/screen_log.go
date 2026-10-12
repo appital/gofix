@@ -41,7 +41,7 @@ func (l screenLog) OnEvent(s string) {
 	fmt.Printf("<%v, %s, event>\n  (%s)\n", logTime, l.prefix, s)
 }
 
-func (l screenLog) OnEventf(format string, a ...interface{}) {
+func (l screenLog) OnEventf(format string, a ...any) {
 	l.OnEvent(fmt.Sprintf(format, a...))
 }
 

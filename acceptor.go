@@ -127,11 +127,9 @@ func (a *Acceptor) Start() (err error) {
 	}
 	if a.dynamicSessions {
 		a.dynamicSessionChan = make(chan *session)
-		a.sessionGroup.Add(1)
-		go func() {
+		a.sessionGroup.Go(func() {
 			a.dynamicSessionsLoop()
-			a.sessionGroup.Done()
-		}()
+		})
 	}
 	a.listenerShutdown.Add(len(a.listeners))
 	for _, listener := range a.listeners {

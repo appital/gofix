@@ -95,8 +95,8 @@ func TestBoilerPlate(t *testing.T) {
 	}
 
 	var tests = []struct {
-		Value         interface{}
-		ExpectedValue interface{}
+		Value         any
+		ExpectedValue any
 	}{
 		{doc.Type, "FIX"},
 		{doc.Major, "4"},

@@ -25,7 +25,7 @@ import (
 type stateMachine struct {
 	State                 sessionState
 	pendingStop, stopped  bool
-	notifyOnInSessionTime chan interface{}
+	notifyOnInSessionTime chan any
 }
 
 func (sm *stateMachine) Start(s *session) {
@@ -134,7 +134,7 @@ func (sm *stateMachine) CheckSessionTime(session *session, now time.Time) {
 		sm.setState(session, notSessionTime{})
 
 		if sm.notifyOnInSessionTime == nil {
-			sm.notifyOnInSessionTime = make(chan interface{})
+			sm.notifyOnInSessionTime = make(chan any)
 		}
 		return
 	}

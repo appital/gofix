@@ -141,8 +141,8 @@ func (l mongoLog) OnEvent(msg string) {
 	l.insert(l.eventLogCollection, []byte(msg))
 }
 
-func (l mongoLog) OnEventf(format string, v ...interface{}) {
-	l.insert(l.eventLogCollection, []byte(fmt.Sprintf(format, v...)))
+func (l mongoLog) OnEventf(format string, v ...any) {
+	l.insert(l.eventLogCollection, fmt.Appendf(nil, format, v...))
 }
 
 func generateEntry(s *gofix.SessionID) (entry *entryData) {
