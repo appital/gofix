@@ -133,6 +133,10 @@ type FieldDef struct {
 	Fields         []*FieldDef
 	requiredParts  []MessagePart
 	requiredFields []*FieldDef
+
+	// fieldsByTag indexes Fields by tag for groups; when a tag repeats the
+	// last definition wins.
+	fieldsByTag map[int]*FieldDef
 }
 
 // NewFieldDef returns an initialized FieldDef.
@@ -175,7 +179,31 @@ func NewGroupFieldDef(fieldType *FieldType, required bool, parts []MessagePart) 
 		}
 	}
 
+	field.fieldsByTag = make(map[int]*FieldDef, len(field.Fields))
+	for _, f := range field.Fields {
+		field.fieldsByTag[f.Tag()] = f
+	}
+
 	return &field
+}
+
+// ChildField returns the field with the given tag that is a member of this
+// repeating group. IsGroup must return true for the result to be meaningful.
+func (f *FieldDef) ChildField(tag int) (*FieldDef, bool) {
+	if f.fieldsByTag != nil {
+		child, ok := f.fieldsByTag[tag]
+		return child, ok
+	}
+
+	// FieldDef was not built by NewGroupFieldDef; the last match wins, as it
+	// would in the index.
+	for i := len(f.Fields) - 1; i >= 0; i-- {
+		if f.Fields[i].Tag() == tag {
+			return f.Fields[i], true
+		}
+	}
+
+	return nil, false
 }
 
 // Required returns true if this FieldDef is required for the containing

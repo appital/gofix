@@ -40,8 +40,7 @@ func BenchmarkParse(b *testing.B) {
 }
 
 // BenchmarkParseWithDD measures the same path with an application data
-// dictionary, which switches on repeating-group detection in doParsing and its
-// per-field []Tag / msgType-string / field-map allocations.
+// dictionary, which switches on repeating-group detection in doParsing.
 func BenchmarkParseWithDD(b *testing.B) {
 	c := loadCorpus(b, tape.MixRealistic)
 	dd := corpusDD(b)

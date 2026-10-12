@@ -1,3 +1,8 @@
+## Unreleased
+
+### ENHANCEMENTS
+* Parsing with an application data dictionary no longer allocates per field when detecting repeating groups; adds `FieldDef.ChildField` for indexed group member lookup
+
 ## 0.9.12 (September 30, 2026)
 
 ### BUG FIXES
