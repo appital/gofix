@@ -2,6 +2,8 @@
 
 ### ENHANCEMENTS
 * Parsing with an application data dictionary no longer allocates per field when detecting repeating groups; adds `FieldDef.ChildField` for indexed group member lookup
+* Looking up an absent field no longer formats a reject error up front, reverse-routing a message no longer round-trips its routing fields through strings, and setting a field takes one allocation instead of two
+* `TagValue` values set through `FieldMap` setters are now copies; they no longer alias the slice passed in
 
 ## 0.9.12 (September 30, 2026)
 

@@ -76,31 +76,54 @@ type messageRejectError struct {
 	rejectReason        int
 	text                string
 	businessRejectRefID string
-	refTagID            *Tag
-	isBusinessReject    bool
+	// refTagID is held by value so that building a reject does not move the
+	// caller's tag to the heap; hasRefTagID distinguishes "no tag" from tag 0.
+	refTagID         Tag
+	hasRefTagID      bool
+	isBusinessReject bool
 }
 
-func (e messageRejectError) Error() string               { return e.text }
-func (e messageRejectError) RefTagID() *Tag              { return e.refTagID }
+func newMessageRejectError(text string, rejectReason int, refTagID *Tag) messageRejectError {
+	e := messageRejectError{text: text, rejectReason: rejectReason}
+	if refTagID != nil {
+		e.refTagID = *refTagID
+		e.hasRefTagID = true
+	}
+	return e
+}
+
+func (e messageRejectError) Error() string { return e.text }
+func (e messageRejectError) RefTagID() *Tag {
+	if !e.hasRefTagID {
+		return nil
+	}
+	tag := e.refTagID
+	return &tag
+}
 func (e messageRejectError) RejectReason() int           { return e.rejectReason }
 func (e messageRejectError) BusinessRejectRefID() string { return e.businessRejectRefID }
 func (e messageRejectError) IsBusinessReject() bool      { return e.isBusinessReject }
 
 // NewMessageRejectError returns a MessageRejectError with the given error message, reject reason, and optional reftagid.
 func NewMessageRejectError(err string, rejectReason int, refTagID *Tag) MessageRejectError {
-	return messageRejectError{text: err, rejectReason: rejectReason, refTagID: refTagID}
+	return newMessageRejectError(err, rejectReason, refTagID)
 }
 
 // NewBusinessMessageRejectError returns a MessageRejectError with the given error mesage, reject reason, and optional reftagid.
 // Reject is treated as a business level reject.
 func NewBusinessMessageRejectError(err string, rejectReason int, refTagID *Tag) MessageRejectError {
-	return messageRejectError{text: err, rejectReason: rejectReason, refTagID: refTagID, isBusinessReject: true}
+	e := newMessageRejectError(err, rejectReason, refTagID)
+	e.isBusinessReject = true
+	return e
 }
 
 // NewBusinessMessageRejectErrorWithRefID returns a MessageRejectError with the given error mesage, reject reason, refID, and optional reftagid.
 // Reject is treated as a business level reject.
 func NewBusinessMessageRejectErrorWithRefID(err string, rejectReason int, businessRejectRefID string, refTagID *Tag) MessageRejectError {
-	return messageRejectError{text: err, rejectReason: rejectReason, refTagID: refTagID, businessRejectRefID: businessRejectRefID, isBusinessReject: true}
+	e := newMessageRejectError(err, rejectReason, refTagID)
+	e.businessRejectRefID = businessRejectRefID
+	e.isBusinessReject = true
+	return e
 }
 
 // IncorrectDataFormatForValue returns an error indicating a field that cannot be parsed as the type required.
@@ -125,8 +148,29 @@ func ValueIsIncorrect(tag Tag) MessageRejectError {
 
 // ConditionallyRequiredFieldMissing indicates that the requested field could not be found in the FIX message.
 func ConditionallyRequiredFieldMissing(tag Tag) MessageRejectError {
-	return NewBusinessMessageRejectError(fmt.Sprintf("Conditionally Required Field Missing (%d)", tag), rejectReasonConditionallyRequiredFieldMissing, &tag)
+	return conditionallyRequiredFieldMissing(tag)
 }
+
+// conditionallyRequiredFieldMissing is returned by every FieldMap lookup that
+// misses, which callers routinely use to probe for optional fields. It is a
+// single word, so returning it does not allocate for tags below 256 and costs
+// one small allocation otherwise, and its text is only formatted if asked for.
+type conditionallyRequiredFieldMissing Tag
+
+func (e conditionallyRequiredFieldMissing) Error() string {
+	return fmt.Sprintf("Conditionally Required Field Missing (%d)", Tag(e))
+}
+
+func (e conditionallyRequiredFieldMissing) RefTagID() *Tag {
+	tag := Tag(e)
+	return &tag
+}
+
+func (conditionallyRequiredFieldMissing) RejectReason() int {
+	return rejectReasonConditionallyRequiredFieldMissing
+}
+func (conditionallyRequiredFieldMissing) BusinessRejectRefID() string { return "" }
+func (conditionallyRequiredFieldMissing) IsBusinessReject() bool      { return true }
 
 // valueIsIncorrectNoTag returns an error indicating a field with value that is not valid.
 // FIXME: to be compliant with legacy tests, for certain value issues, do not include reftag? (11c_NewSeqNoLess).

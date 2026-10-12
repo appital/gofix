@@ -295,3 +295,17 @@ func TestInvalidTagNumber(t *testing.T) {
 		t.Error("Expected IsBusinessReject to be false\n")
 	}
 }
+
+func TestMessageRejectErrorRefTagIDIsHeldByValue(t *testing.T) {
+	var tag Tag
+	msgRej := NewMessageRejectError("Custom error", 5, &tag)
+	tag = 44
+
+	// Tag 0 is still a reference tag, distinct from having none.
+	if got := msgRej.RefTagID(); got == nil || *got != 0 {
+		t.Errorf("expected: 0, got: %v\n", got)
+	}
+	if got := ConditionallyRequiredFieldMissing(44).BusinessRejectRefID(); got != "" {
+		t.Errorf("expected no BusinessRejectRefID, got: %s\n", got)
+	}
+}

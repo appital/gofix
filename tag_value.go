@@ -29,13 +29,21 @@ type TagValue struct {
 }
 
 func (tv *TagValue) init(tag Tag, value []byte) {
-	tv.bytes = strconv.AppendInt(nil, int64(tag), 10)
-	tv.bytes = append(tv.bytes, []byte("=")...)
+	var tagBuf [20]byte
+	tagBytes := strconv.AppendInt(tagBuf[:0], int64(tag), 10)
+
+	// Size the field exactly so it takes a single allocation.
+	n := len(tagBytes) + 1 + len(value) + 1
+	tv.bytes = make([]byte, 0, n)
+	tv.bytes = append(tv.bytes, tagBytes...)
+	tv.bytes = append(tv.bytes, '=')
 	tv.bytes = append(tv.bytes, value...)
-	tv.bytes = append(tv.bytes, []byte("")...)
+	tv.bytes = append(tv.bytes, '\x01')
 
 	tv.tag = tag
-	tv.value = value
+	// The value is a view of the field's own copy, so the field does not
+	// alias, and is not changed by later writes to, the caller's slice.
+	tv.value = tv.bytes[len(tagBytes)+1 : n-1 : n-1]
 }
 
 func (tv *TagValue) parse(rawFieldBytes []byte) error {

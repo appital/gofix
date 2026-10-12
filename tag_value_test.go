@@ -88,3 +88,14 @@ func TestTagValue_total(t *testing.T) {
 	assert.Equal(t, 643, tv.total(), "Total is the summation of the ascii byte values of the field string")
 	assert.Equal(t, 643, bytesTotal([]byte(stringField)))
 }
+
+func TestTagValueInitCopiesValue(t *testing.T) {
+	value := []byte("hello")
+	var tv TagValue
+	tv.init(Tag(8), value)
+
+	value[0] = 'j'
+	assert.Equal(t, "hello", string(tv.value))
+	assert.Equal(t, "8=hello\x01", string(tv.bytes))
+	assert.Equal(t, len(tv.value), cap(tv.value), "value must not be able to append into the delimiter")
+}
