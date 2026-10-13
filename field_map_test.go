@@ -77,7 +77,8 @@ func TestFieldMap_Length(t *testing.T) {
 	fMap.SetField(8, FIXString("FIX.4.4"))
 	fMap.SetField(9, FIXInt(100))
 	fMap.SetField(10, FIXString("100"))
-	assert.Equal(t, 16, fMap.length(), "Length should include all fields but beginString, bodyLength, and checkSum")
+	length, _ := fMap.lengthAndTotal(0)
+	assert.Equal(t, 16, length, "Length should include all fields but beginString, bodyLength, and checkSum")
 }
 
 func TestFieldMap_Total(t *testing.T) {
@@ -90,7 +91,11 @@ func TestFieldMap_Total(t *testing.T) {
 	fMap.SetField(Tag(9), FIXInt(100))
 	fMap.SetField(10, FIXString("100"))
 
-	assert.Equal(t, 2116, fMap.total(), "Total should includes all fields but checkSum")
+	_, total := fMap.lengthAndTotal(0)
+	assert.Equal(t, 2116, total, "Total should includes all fields but checkSum")
+
+	_, total = fMap.lengthAndTotal(tagBodyLength)
+	assert.Equal(t, 2116-bytesTotal([]byte("9=100\x01")), total, "Total should leave out the skipped tag")
 }
 
 func TestFieldMap_TypedSetAndGet(t *testing.T) {
@@ -242,4 +247,11 @@ func TestFieldMap_GetTimeConcurrentWithSet(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("deadlock: GetTime did not complete concurrently with writers")
 	}
+}
+
+// sortedTags returns m's tags in order.
+func (m *FieldMap) sortedTags() []Tag {
+	m.rLockSorted()
+	defer m.rwLock.RUnlock()
+	return m.tags
 }

@@ -46,6 +46,11 @@ type tagOrder func(i, j Tag) bool
 type tagSort struct {
 	tags    []Tag
 	compare tagOrder
+
+	// sorted records that tags is in compare order, so that a FieldMap built
+	// more than once is sorted only after it changes. Anything that adds to
+	// tags clears it.
+	sorted bool
 }
 
 func (t tagSort) Len() int           { return len(t.tags) }
@@ -91,6 +96,7 @@ func (m *FieldMap) initWithOrdering(ordering tagOrder) {
 func (m *FieldMap) initWithLock(ordering tagOrder, lock *sync.RWMutex) {
 	m.rwLock = lock
 	m.compare = ordering
+	m.sorted = false
 }
 
 // ensureLookup creates tagLookup if this is the first write.
@@ -109,6 +115,7 @@ func (m *FieldMap) reserve(n int, tags []Tag) {
 	}
 	if cap(m.tags) == 0 {
 		m.tags = tags
+		m.sorted = false
 	}
 }
 
@@ -119,6 +126,7 @@ func (m *FieldMap) appendTag(tag Tag) {
 		m.tags = make([]Tag, 0, firstTagsCap)
 	}
 	m.tags = append(m.tags, tag)
+	m.sorted = false
 }
 
 // newField returns storage for a single field.
@@ -328,7 +336,19 @@ func (m *FieldMap) Remove(tag Tag) {
 	m.rwLock.Lock()
 	defer m.rwLock.Unlock()
 
+	if _, ok := m.tagLookup[tag]; !ok {
+		return
+	}
 	delete(m.tagLookup, tag)
+
+	// Drop the tag from tags too, or setting it again would list it twice and
+	// the field would be written twice. Removing keeps the rest in order.
+	for i, t := range m.tags {
+		if t == tag {
+			m.tags = append(m.tags[:i], m.tags[i+1:]...)
+			break
+		}
+	}
 }
 
 // Clear purges all fields from field map.
@@ -366,6 +386,7 @@ func (m *FieldMap) CopyInto(to *FieldMap) {
 	to.tags = make([]Tag, len(m.tags))
 	copy(to.tags, m.tags)
 	to.compare = m.compare
+	to.sorted = m.sorted
 }
 
 func (m *FieldMap) add(f field) {
@@ -417,54 +438,69 @@ func (m *FieldMap) SetGroup(field FieldGroupWriter) *FieldMap {
 	return m
 }
 
-func (m *FieldMap) sortedTags() []Tag {
-	sort.Sort(m)
-	return m.tags
+// rLockSorted read-locks m with its tags in compare order. Sorting needs the
+// write lock, so that is taken only when tags have changed since the last
+// sort; building an unchanged FieldMap again sorts nothing.
+func (m *FieldMap) rLockSorted() {
+	for {
+		m.rwLock.RLock()
+		if m.sorted {
+			return
+		}
+		m.rwLock.RUnlock()
+
+		m.rwLock.Lock()
+		if !m.sorted {
+			sort.Sort(&m.tagSort)
+			m.sorted = true
+		}
+		m.rwLock.Unlock()
+	}
 }
 
-func (m FieldMap) write(buffer *bytes.Buffer) {
-	m.rwLock.Lock()
-	defer m.rwLock.Unlock()
+func (m *FieldMap) write(buffer *bytes.Buffer) {
+	m.rLockSorted()
+	defer m.rwLock.RUnlock()
 
-	for _, tag := range m.sortedTags() {
+	for _, tag := range m.tags {
 		if f, ok := m.tagLookup[tag]; ok {
 			writeField(f, buffer)
 		}
 	}
 }
 
-func (m FieldMap) total() int {
+// lengthAndTotal returns, from a single walk of m, its contribution to
+// BodyLength and to CheckSum. BeginString, BodyLength and CheckSum do not
+// count toward the length, and CheckSum does not count toward the total. A
+// non-zero skip is left out of the total as well.
+func (m *FieldMap) lengthAndTotal(skip Tag) (length, total int) {
 	m.rwLock.RLock()
 	defer m.rwLock.RUnlock()
 
-	total := 0
 	for _, fields := range m.tagLookup {
 		for _, tv := range fields {
 			switch tv.tag {
-			case tagCheckSum: // Tag does not contribute to total.
+			case tagBeginString, tagBodyLength, tagCheckSum:
 			default:
+				length += tv.length()
+			}
+			if tv.tag != tagCheckSum && tv.tag != skip {
 				total += tv.total()
 			}
 		}
 	}
 
-	return total
+	return length, total
 }
 
-func (m FieldMap) length() int {
+// fieldBytes returns the encoded bytes of the field for tag, tag and
+// delimiter included, or nil if it is not set.
+func (m *FieldMap) fieldBytes(tag Tag) []byte {
 	m.rwLock.RLock()
 	defer m.rwLock.RUnlock()
 
-	length := 0
-	for _, fields := range m.tagLookup {
-		for _, tv := range fields {
-			switch tv.tag {
-			case tagBeginString, tagBodyLength, tagCheckSum: // Tags do not contribute to length.
-			default:
-				length += tv.length()
-			}
-		}
+	if f, ok := m.tagLookup[tag]; ok {
+		return f[0].bytes
 	}
-
-	return length
+	return nil
 }
