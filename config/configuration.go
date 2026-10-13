@@ -692,6 +692,8 @@ const (
 
 	// UseTCPProxy if set to Y, use TCP proxy for servers listening behind HAProxy of Amazon ELB load balancers.
 	// The server can then receive the address of the client instead of the load balancer's.
+	// Every connection must open with a PROXY protocol header; connections without one are closed.
+	// Headers are accepted from any peer, so the listener should only be reachable through the load balancer.
 	// Used for acceptors only.
 	//
 	// Required: No
