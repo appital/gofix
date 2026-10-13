@@ -624,3 +624,80 @@ func TestCheckSumDigits(t *testing.T) {
 		}
 	}
 }
+
+func newBuildTestMessage() *Message {
+	m := NewMessage()
+	m.Header.SetString(tagBeginString, "FIX.4.4")
+	m.Header.SetString(tagMsgType, "D")
+	m.Header.SetString(tagSenderCompID, "S")
+	m.Header.SetString(tagTargetCompID, "T")
+	m.Body.SetString(Tag(55), "ABC")
+	m.Body.SetString(Tag(11), "id")
+	return m
+}
+
+// wireLengthAndCheckSum computes BodyLength and CheckSum from built bytes.
+func wireLengthAndCheckSum(t *testing.T, raw []byte) (int, int) {
+	t.Helper()
+	fields := bytes.Split(bytes.TrimSuffix(raw, []byte{'\x01'}), []byte{'\x01'})
+	if len(fields) < 3 {
+		t.Fatalf("too few fields in %q", raw)
+	}
+	bodyStart := len(fields[0]) + 1 + len(fields[1]) + 1
+	checkSumStart := len(raw) - len(fields[len(fields)-1]) - 1
+	return checkSumStart - bodyStart, bytesTotal(raw[:checkSumStart]) % 256
+}
+
+func assertBuildConsistent(t *testing.T, raw []byte) {
+	t.Helper()
+	msg := NewMessage()
+	if err := ParseMessage(msg, bytes.NewBuffer(bytes.Clone(raw))); err != nil {
+		t.Fatalf("built message %q does not parse: %v", raw, err)
+	}
+	wantLength, wantCheckSum := wireLengthAndCheckSum(t, raw)
+	if got, _ := msg.Header.GetInt(tagBodyLength); got != wantLength {
+		t.Errorf("BodyLength = %v, want %v in %q", got, wantLength, raw)
+	}
+	if got, _ := msg.Trailer.GetInt(tagCheckSum); got != wantCheckSum {
+		t.Errorf("CheckSum = %v, want %v in %q", got, wantCheckSum, raw)
+	}
+}
+
+func TestBuildIsSizedExactly(t *testing.T) {
+	raw := newBuildTestMessage().build()
+	assertBuildConsistent(t, raw)
+	if len(raw) != cap(raw) {
+		t.Errorf("built %v bytes into a buffer of %v", len(raw), cap(raw))
+	}
+}
+
+func TestBuildAgainAfterChange(t *testing.T) {
+	m := newBuildTestMessage()
+	first := m.build()
+	if again := m.build(); !bytes.Equal(first, again) {
+		t.Fatalf("rebuilding an unchanged message gave %q, want %q", again, first)
+	}
+
+	// A tag that sorts first, added after a build, must still be written in
+	// order and counted.
+	m.Body.SetString(Tag(1), "acct")
+	m.Header.SetString(tagMsgSeqNum, "7")
+	raw := m.build()
+	assertBuildConsistent(t, raw)
+	if !bytes.Contains(raw, []byte("\x0134=7\x0149=S\x0156=T\x011=acct\x0111=id\x0155=ABC\x0110=")) {
+		t.Errorf("fields out of order in %q", raw)
+	}
+}
+
+func TestBuildAfterRemoveAndSet(t *testing.T) {
+	m := newBuildTestMessage()
+	m.Body.Remove(Tag(55))
+	m.Body.SetString(Tag(55), "XYZ")
+	m.Body.Remove(Tag(999)) // Absent tags are ignored.
+
+	raw := m.build()
+	assertBuildConsistent(t, raw)
+	if n := bytes.Count(raw, []byte("\x0155=")); n != 1 {
+		t.Errorf("tag 55 written %v times in %q", n, raw)
+	}
+}

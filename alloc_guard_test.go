@@ -110,6 +110,24 @@ func TestAllocsRepeatingGroupAdd(t *testing.T) {
 	assertAllocs(t, 1, func() { rg.Add() })
 }
 
+// Building a populated message allocates only the output buffer and the new
+// BodyLength and CheckSum values: no FieldMap copies or buffer growth.
+func TestAllocsBuild(t *testing.T) {
+	c := loadCorpus(t, tape.MixRealistic)
+
+	// The first build of a message also creates its BodyLength and CheckSum
+	// fields.
+	for _, msg := range c.messages {
+		sinkBytes = msg.build()
+	}
+
+	i := 0
+	assertAllocs(t, 3, func() {
+		sinkBytes = c.messages[i%len(c.messages)].build()
+		i++
+	})
+}
+
 // Probing for an absent field must not pay for a formatted reject error. Tags
 // below 256 box without allocating; larger ones cost one small allocation.
 func TestAllocsFieldMapMiss(t *testing.T) {

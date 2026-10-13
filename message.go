@@ -608,12 +608,10 @@ func checkSumDigits(value int) [3]byte {
 
 // Build constructs a []byte from a Message instance.
 func (m *Message) build() []byte {
-	m.cook(m.Body.length(), m.Body.total())
-
-	var b bytes.Buffer
-	m.Header.write(&b)
-	m.Body.write(&b)
-	m.Trailer.write(&b)
+	b := bytes.NewBuffer(make([]byte, 0, m.cook(m.Body.lengthAndTotal(0))))
+	m.Header.write(b)
+	m.Body.write(b)
+	m.Trailer.write(b)
 	return b.Bytes()
 }
 
@@ -623,19 +621,28 @@ func (m *Message) build() []byte {
 // This func lets us pull the Message from the Store, parse it, update the Header, and then build it back into bytes using the original Body.
 // Note: The only standard non-Body group is NoHops.  If that is used in the Header, this workaround may fail.
 func (m *Message) buildWithBodyBytes(bodyBytes []byte) []byte {
-	m.cook(len(bodyBytes), bytesTotal(bodyBytes))
-
-	var b bytes.Buffer
-	m.Header.write(&b)
+	b := bytes.NewBuffer(make([]byte, 0, m.cook(len(bodyBytes), bytesTotal(bodyBytes))))
+	m.Header.write(b)
 	b.Write(bodyBytes)
-	m.Trailer.write(&b)
+	m.Trailer.write(b)
 	return b.Bytes()
 }
 
-func (m *Message) cook(bodyLen, bodyTotal int) {
-	bodyLength := m.Header.length() + bodyLen + m.Trailer.length()
+// cook sets BodyLength and CheckSum from the body's length and total, and
+// returns the size of the built message.
+func (m *Message) cook(bodyLen, bodyTotal int) int {
+	// BodyLength is left out of the header's total because it is about to
+	// change; the new field's total is added once it is set.
+	headerLen, headerTotal := m.Header.lengthAndTotal(tagBodyLength)
+	trailerLen, trailerTotal := m.Trailer.lengthAndTotal(0)
+
+	bodyLength := headerLen + bodyLen + trailerLen
 	m.Header.SetInt(tagBodyLength, bodyLength)
-	checkSum := (m.Header.total() + bodyTotal + m.Trailer.total()) % 256
+	bodyLengthField := m.Header.fieldBytes(tagBodyLength)
+
+	checkSum := (headerTotal + bytesTotal(bodyLengthField) + bodyTotal + trailerTotal) % 256
 	digits := checkSumDigits(checkSum)
 	m.Trailer.SetBytes(tagCheckSum, digits[:])
+
+	return bodyLength + len(m.Header.fieldBytes(tagBeginString)) + len(bodyLengthField) + len(m.Trailer.fieldBytes(tagCheckSum))
 }

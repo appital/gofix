@@ -23,8 +23,9 @@ import (
 )
 
 // BenchmarkBuild serialises an already-populated Message. This is the outbound
-// hot path minus field population: checksum, body length, three sorts, three
-// map walks per section, and the buffer copy.
+// hot path minus field population: checksum, body length, a length-and-total
+// walk and a write per section, and the buffer copy. Each corpus message is
+// built repeatedly, so its sections are sorted only on the first build.
 func BenchmarkBuild(b *testing.B) {
 	c := loadCorpus(b, tape.MixRealistic)
 
@@ -161,33 +162,28 @@ func BenchmarkTagValue(b *testing.B) {
 	})
 }
 
-// BenchmarkFieldMap breaks build() into its three passes over each section.
-// build() runs length and total once per section and write once, so the sum of
-// these times three sections is roughly BenchmarkBuild.
+// BenchmarkFieldMap breaks build() into its passes over each section.
+// build() runs lengthAndTotal and write once per section, so the sum of these
+// times three sections is roughly BenchmarkBuild.
 func BenchmarkFieldMap(b *testing.B) {
 	c := loadCorpus(b, tape.MixRealistic).subset(tape.MsgTypeExecutionReport)
 	msg := c.messages[0]
 
-	b.Run("length", func(b *testing.B) {
+	b.Run("lengthAndTotal", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			sinkInt = msg.Body.length()
+			sinkInt, _ = msg.Body.lengthAndTotal(0)
 		}
 	})
 
-	b.Run("total", func(b *testing.B) {
+	// Sorting after every change is what a freshly populated Message pays;
+	// an unchanged one is not sorted again.
+	b.Run("sort", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			sinkInt = msg.Body.total()
-		}
-	})
-
-	b.Run("sortedTags", func(b *testing.B) {
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+			msg.Body.sorted = false
 			sinkInt = len(msg.Body.sortedTags())
 		}
 	})

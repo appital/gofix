@@ -158,9 +158,8 @@ func (f RepeatingGroup) Write() []TagValue {
 	tvs[0].init(f.tag, []byte(strconv.Itoa(len(f.groups))))
 
 	for _, group := range f.groups {
-		tags := group.sortedTags()
-		group.rwLock.RLock()
-		for _, tag := range tags {
+		group.rLockSorted()
+		for _, tag := range group.tags {
 			if fields, ok := group.tagLookup[tag]; ok {
 				tvs = append(tvs, fields...)
 			}

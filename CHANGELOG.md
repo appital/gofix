@@ -10,9 +10,11 @@
 * `NewMessage` is one allocation instead of seven, parsing presizes a fresh message's field storage from its field count, and setting fields carves their storage from chunks rather than allocating each one
 * Validating a message no longer allocates: `RejectInvalidMessage` checks field formats in place instead of building a `FieldValue` per field, duplicate tags are tracked without a per-message map, and the message type is no longer copied to a string
 * Building a message formats its checksum and body length without allocating, `SetInt` no longer allocates beyond the field itself, and a `RepeatingGroup` builds its template's tag ordering once rather than for every entry, allocates each entry and its lock together, and reads plain template fields without cloning them
+* Building a message walks each section twice instead of three times, sorts a section only when it has changed since the last build, writes under a read lock, no longer copies each section to the heap, and writes into a buffer sized exactly up front
 
 ### BUG FIXES
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
+* Removing a field and then setting it again no longer writes it twice with a BodyLength that counts it once
 
 ## 0.9.12 (September 30, 2026)
 
