@@ -1305,3 +1305,53 @@ func TestValidateVisitField(t *testing.T) {
 		}
 	}
 }
+
+func TestSeenTags(t *testing.T) {
+	var seen seenTags
+	for _, tag := range []Tag{0, 1, 35, 63, 64, seenTagsBitsetSize - 1, seenTagsBitsetSize, 20000} {
+		assert.False(t, seen.visit(tag), "first visit of tag %v", tag)
+		assert.True(t, seen.visit(tag), "second visit of tag %v", tag)
+	}
+	assert.False(t, seen.visit(2), "tag 2 was never visited")
+	assert.False(t, seen.visit(20001), "tag 20001 was never visited")
+}
+
+func TestValidFieldFormat(t *testing.T) {
+	var tests = []struct {
+		fieldType string
+		value     string
+		valid     bool
+	}{
+		{"BOOLEAN", "Y", true},
+		{"BOOLEAN", "N", true},
+		{"BOOLEAN", "y", false},
+		{"BOOLEAN", "YN", false},
+		{"INT", "123", true},
+		{"INT", "-123", true},
+		{"INT", "12a", false},
+		{"SEQNUM", "1.5", false},
+		{"NUMINGROUP", "2", true},
+		{"LENGTH", "-", false},
+		{"DAYOFMONTH", "31", true},
+		{"FLOAT", "1.25", true},
+		{"PRICE", "-0.5", true},
+		{"QTY", "+100", false},
+		{"AMT", "1e5", false},
+		{"PERCENTAGE", "abc", false},
+		{"UTCTIMESTAMP", "20160101-12:34:56", true},
+		{"UTCTIMESTAMP", "20160101-12:34:56.789", true},
+		{"UTCTIMESTAMP", "20160101-12:34:56.789123", true},
+		{"UTCTIMESTAMP", "20160101-12:34:56.789123456", true},
+		{"UTCTIMESTAMP", "20160101-25:34:56", false},
+		{"TIME", "20160101", false},
+		{"STRING", "anything at all", true},
+		{"CHAR", "1", true},
+		{"MONTHYEAR", "201601", true},
+		// A type the validator does not know is not checked.
+		{"SOMEFUTURETYPE", "x", true},
+	}
+
+	for _, test := range tests {
+		assert.Equal(t, test.valid, validFieldFormat(test.fieldType, []byte(test.value)), "%v %q", test.fieldType, test.value)
+	}
+}
