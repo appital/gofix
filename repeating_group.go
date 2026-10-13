@@ -117,6 +117,12 @@ func (f *RepeatingGroup) Add() *Group {
 	g := new(Group)
 	g.initWithOrdering(f.groupTagOrder())
 
+	// The entries of a group are usually alike, so expect as many fields as
+	// the previous one has.
+	if n := len(f.groups); n > 0 {
+		g.spareHint = len(f.groups[n-1].tags)
+	}
+
 	f.groups = append(f.groups, g)
 	return g
 }
@@ -223,8 +229,9 @@ func (f *RepeatingGroup) Read(tv []TagValue) ([]TagValue, error) {
 		}
 
 		group.rwLock.Lock()
+		group.ensureLookup()
 		group.tagLookup[tvRange[0].tag] = tvRange
-		group.tags = append(group.tags, gi.Tag())
+		group.appendTag(gi.Tag())
 		group.rwLock.Unlock()
 	}
 

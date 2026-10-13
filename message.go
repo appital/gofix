@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/appital/gofix/datadictionary"
@@ -132,12 +133,21 @@ func (e parseError) Error() string { return fmt.Sprintf("error parsing message: 
 
 // NewMessage returns a newly initialized Message instance.
 func NewMessage() *Message {
-	m := new(Message)
-	m.Header.Init()
-	m.Body.Init()
-	m.Trailer.Init()
+	// One allocation covers the Message and the locks of all three sections.
+	ml := new(messageWithLocks)
+	m := &ml.Message
+	m.Header.initWithLock(headerFieldOrdering, &ml.locks[0])
+	m.Body.initWithLock(normalFieldOrder, &ml.locks[1])
+	m.Trailer.initWithLock(trailerFieldOrdering, &ml.locks[2])
+	m.Header.spareHint = typicalHeaderFields
+	m.Trailer.spareHint = 1 // Usually just CheckSum.
 
 	return m
+}
+
+type messageWithLocks struct {
+	Message
+	locks [3]sync.RWMutex
 }
 
 // CopyInto erases the dest messages and copies the currency message content
@@ -180,6 +190,16 @@ func ParseMessageWithDataDictionary(
 	return doParsing(mp)
 }
 
+// Presizing for the sections of a freshly parsed Message. A header of eight
+// or fewer fields fits a map's smallest table. The body's estimate counts
+// repeating group members, which do not get map entries of their own when a
+// data dictionary is in use, so it is capped.
+const (
+	typicalHeaderFields   = 8
+	typicalTrailerFields  = 2
+	maxPresizedBodyFields = 64
+)
+
 // doParsing executes the message parsing process.
 func doParsing(mp *msgParser) (err error) {
 	mp.msg.Header.rwLock.Lock()
@@ -203,6 +223,19 @@ func doParsing(mp *msgParser) (err error) {
 		mp.msg.fields = make([]TagValue, fieldCount)
 	} else {
 		mp.msg.fields = mp.msg.fields[0:fieldCount]
+	}
+
+	// Size a fresh Message's sections up front rather than growing them field
+	// by field. Which section a field lands in is not known until it is
+	// parsed, so the header and trailer get typical sizes and the body gets
+	// the rest; the three tags slices share one allocation.
+	if mp.msg.Body.tagLookup == nil {
+		const headerSize, trailerSize = typicalHeaderFields, typicalTrailerFields
+		bodySize := min(max(fieldCount-headerSize-trailerSize, 1), maxPresizedBodyFields)
+		tags := make([]Tag, headerSize+trailerSize+bodySize)
+		mp.msg.Header.reserve(headerSize, tags[0:0:headerSize])
+		mp.msg.Trailer.reserve(trailerSize, tags[headerSize:headerSize:headerSize+trailerSize])
+		mp.msg.Body.reserve(bodySize, tags[headerSize+trailerSize:headerSize+trailerSize])
 	}
 
 	// Message must start with begin string, body length, msg type.
