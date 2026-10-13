@@ -96,3 +96,51 @@ func TestAllocsReverseRoute(t *testing.T) {
 	})
 	assertAllocs(t, floor, func() { sinkMsg = msg.reverseRoute() })
 }
+
+// An empty Message is a single allocation: its section maps are created on
+// first use, and its three locks live in the same block as the struct.
+func TestAllocsNewMessage(t *testing.T) {
+	assertAllocs(t, 1, func() { sinkMsg = NewMessage() })
+}
+
+// Populating a fresh Message costs one allocation per field for its wire
+// bytes. Storage for the fields grows in chunks rather than per field, and
+// costs 17 allocations for this 31-field body, most of them map growth.
+func TestAllocsPopulateFresh(t *testing.T) {
+	fields := loadCorpus(t, tape.MixRealistic).subset(tape.MsgTypeExecutionReport).entries[0].Body
+	values := make([][]byte, len(fields))
+	for i, f := range fields {
+		values[i] = []byte(f.Value)
+	}
+
+	assertAllocs(t, float64(len(fields)+17), func() {
+		m := NewMessage()
+		for i, f := range fields {
+			m.Body.SetBytes(Tag(f.Tag), values[i])
+		}
+		sinkMsg = m
+	})
+}
+
+// Parsing into a fresh Message sizes its sections from the field count, so
+// the cost barely grows with the number of fields: it was 15 allocations for
+// a Heartbeat and 29 for an ExecutionReport when the sections grew per field.
+func TestAllocsParseFresh(t *testing.T) {
+	c := loadCorpus(t, tape.MixRealistic)
+	for name, msgType := range map[string]string{
+		"Heartbeat":             tape.MsgTypeHeartbeat,
+		"ExecutionReport":       tape.MsgTypeExecutionReport,
+		"MarketDataIncremental": tape.MsgTypeMarketDataIncrementalRefresh,
+	} {
+		t.Run(name, func(t *testing.T) {
+			buf := c.subset(msgType).buffers()[0]
+			assertAllocs(t, 12, func() {
+				msg := NewMessage()
+				if err := ParseMessage(msg, buf); err != nil {
+					t.Fatal(err)
+				}
+				sinkMsg = msg
+			})
+		})
+	}
+}

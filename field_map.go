@@ -53,10 +53,28 @@ func (t tagSort) Less(i, j int) bool { return t.compare(t.tags[i], t.tags[j]) }
 
 // FieldMap is a collection of fix fields that make up a fix message.
 type FieldMap struct {
+	// tagLookup is created on first write, so that it can be sized for the
+	// fields about to be added. Reads of a nil map are safe.
 	tagLookup map[Tag]field
 	tagSort
 	rwLock *sync.RWMutex
+
+	// spare is storage for fields set one at a time, carved off in chunks so
+	// that a Set does not allocate a field of its own. When spareHint is set,
+	// it sizes the first chunk instead of firstSpareChunk.
+	spare     []TagValue
+	spareHint int
 }
+
+// Chunk sizes for FieldMap.spare. Chunks double from the first size up to
+// the last, so a small section stays small and a large one allocates rarely.
+const (
+	firstSpareChunk = 4
+	maxSpareChunk   = 32
+)
+
+// firstTagsCap is the capacity an empty tags slice starts at.
+const firstTagsCap = 8
 
 // ascending tags.
 func normalFieldOrder(i, j Tag) bool { return i < j }
@@ -66,9 +84,60 @@ func (m *FieldMap) init() {
 }
 
 func (m *FieldMap) initWithOrdering(ordering tagOrder) {
-	m.rwLock = &sync.RWMutex{}
-	m.tagLookup = make(map[Tag]field)
+	m.initWithLock(ordering, &sync.RWMutex{})
+}
+
+func (m *FieldMap) initWithLock(ordering tagOrder, lock *sync.RWMutex) {
+	m.rwLock = lock
 	m.compare = ordering
+}
+
+// ensureLookup creates tagLookup if this is the first write.
+func (m *FieldMap) ensureLookup() {
+	if m.tagLookup == nil {
+		m.tagLookup = make(map[Tag]field)
+	}
+}
+
+// reserve sizes an empty FieldMap's storage for about n fields. It does
+// nothing to a FieldMap that already has storage, so that a reused one keeps
+// whatever it has grown to.
+func (m *FieldMap) reserve(n int, tags []Tag) {
+	if m.tagLookup == nil {
+		m.tagLookup = make(map[Tag]field, n)
+	}
+	if cap(m.tags) == 0 {
+		m.tags = tags
+	}
+}
+
+// appendTag records a new tag, skipping the smallest growth steps of an empty
+// tags slice.
+func (m *FieldMap) appendTag(tag Tag) {
+	if cap(m.tags) == 0 {
+		m.tags = make([]Tag, 0, firstTagsCap)
+	}
+	m.tags = append(m.tags, tag)
+}
+
+// newField returns storage for a single field.
+func (m *FieldMap) newField() field {
+	if len(m.spare) == 0 {
+		size := firstSpareChunk
+		switch n := len(m.tags); {
+		case m.spareHint > 0:
+			size, m.spareHint = min(m.spareHint, maxSpareChunk), 0
+		case n > size:
+			size = min(n, maxSpareChunk)
+		}
+		m.spare = make([]TagValue, size)
+	}
+
+	// Cap the field at one element so that nothing can append into its
+	// neighbour.
+	f := field(m.spare[:1:1])
+	m.spare = m.spare[1:]
+	return f
 }
 
 // Tags returns all of the Field Tags in this FieldMap.
@@ -283,11 +352,14 @@ func (m *FieldMap) CopyInto(to *FieldMap) {
 	m.rwLock.RLock()
 	defer m.rwLock.RUnlock()
 
-	to.tagLookup = make(map[Tag]field)
+	to.tagLookup = make(map[Tag]field, len(m.tagLookup))
+	clones := make([]TagValue, len(m.tagLookup))
+	i := 0
 	for tag, f := range m.tagLookup {
-		clone := make(field, 1)
+		clone := field(clones[i : i+1 : i+1])
 		clone[0] = f[0]
 		to.tagLookup[tag] = clone
+		i++
 	}
 	to.tags = make([]Tag, len(m.tags))
 	copy(to.tags, m.tags)
@@ -295,9 +367,11 @@ func (m *FieldMap) CopyInto(to *FieldMap) {
 }
 
 func (m *FieldMap) add(f field) {
+	m.ensureLookup()
+
 	t := fieldTag(f)
 	if _, ok := m.tagLookup[t]; !ok {
-		m.tags = append(m.tags, t)
+		m.appendTag(t)
 	}
 
 	m.tagLookup[t] = f
@@ -312,9 +386,11 @@ func (m *FieldMap) getOrCreate(tag Tag) field {
 		return f
 	}
 
-	f := make(field, 1)
+	m.ensureLookup()
+
+	f := m.newField()
 	m.tagLookup[tag] = f
-	m.tags = append(m.tags, tag)
+	m.appendTag(tag)
 	return f
 }
 
@@ -330,9 +406,10 @@ func (m *FieldMap) SetGroup(field FieldGroupWriter) *FieldMap {
 	m.rwLock.Lock()
 	defer m.rwLock.Unlock()
 
+	m.ensureLookup()
 	_, ok := m.tagLookup[field.Tag()]
 	if !ok {
-		m.tags = append(m.tags, field.Tag())
+		m.appendTag(field.Tag())
 	}
 	m.tagLookup[field.Tag()] = field.Write()
 	return m
