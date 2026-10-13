@@ -1,5 +1,8 @@
 ## Unreleased
 
+### FEATURES
+* Adds `ReuseIncomingMessages` session setting: inbound messages are parsed into one reused `Message` and their read buffers are recycled, so receiving a message no longer allocates for either. Off by default; when on, a received `*Message` is valid only until the callback returns
+
 ### ENHANCEMENTS
 * Parsing with an application data dictionary no longer allocates per field when detecting repeating groups; adds `FieldDef.ChildField` for indexed group member lookup
 * Looking up an absent field no longer formats a reject error up front, reverse-routing a message no longer round-trips its routing fields through strings, and setting a field takes one allocation instead of two

@@ -43,6 +43,7 @@ type options struct {
 	store    string
 	persist  bool
 	validate bool
+	reuse    bool
 
 	cpuProfile   string
 	memProfile   string
@@ -91,6 +92,7 @@ func parseFlags() options {
 	flag.StringVar(&o.store, "store", "memory", "message store: memory or file")
 	flag.BoolVar(&o.persist, "persist", true, "persist outbound messages to the store")
 	flag.BoolVar(&o.validate, "validate", false, "validate inbound messages against the FIX 4.4 data dictionary")
+	flag.BoolVar(&o.reuse, "reuse", false, "enable ReuseIncomingMessages on every session")
 
 	flag.StringVar(&o.cpuProfile, "cpuprofile", "", "write a CPU profile here")
 	flag.StringVar(&o.memProfile, "memprofile", "", "write a heap profile here")
@@ -322,6 +324,7 @@ func summarise(
 			"store":      opts.store,
 			"persist":    strconv.FormatBool(opts.persist),
 			"validate":   strconv.FormatBool(opts.validate),
+			"reuse":      strconv.FormatBool(opts.reuse),
 			"gomaxprocs": strconv.Itoa(runtime.GOMAXPROCS(0)),
 			"seed":       strconv.FormatInt(opts.seed, 10),
 		},

@@ -125,7 +125,8 @@ cd _test && go build -o loadgen_bin ./loadgen/
 
 Key flags: `-rate` (per session, `0` saturates), `-sessions`, `-duration`,
 `-warmup` (excluded from all statistics), `-mix`, `-store=memory|file`,
-`-persist`, `-validate`, `-gomaxprocs`, and the profile paths.
+`-persist`, `-validate`, `-reuse` (`ReuseIncomingMessages`), `-gomaxprocs`, and
+the profile paths.
 
 It reports throughput, round-trip latency percentiles, and — the number this
 whole exercise is about — **allocations per message**, taken from a

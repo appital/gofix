@@ -64,6 +64,39 @@ type session struct {
 
 	timestampPrecision      TimestampPrecision
 	lastCheckedResetSeqTime time.Time
+
+	// incoming is the Message every inbound message is parsed into when
+	// ReuseIncomingMessages is enabled.
+	incoming *Message
+}
+
+// incomingMessage returns the Message to parse the next inbound message into.
+func (s *session) incomingMessage() *Message {
+	if !s.ReuseIncomingMessages {
+		return NewMessage()
+	}
+	if s.incoming == nil {
+		s.incoming = NewMessage()
+	}
+	return s.incoming
+}
+
+// retainIncoming returns a version of msg, an inbound message, that remains
+// valid after the current message has been processed. With
+// ReuseIncomingMessages enabled that is a fresh parse of a copy of its bytes;
+// otherwise msg is already safe to keep.
+func (s *session) retainIncoming(msg *Message) (*Message, error) {
+	if !s.ReuseIncomingMessages {
+		return msg, nil
+	}
+
+	kept := NewMessage()
+	raw := bytes.NewBuffer(bytes.Clone(msg.rawMessage.Bytes()))
+	if err := ParseMessageWithDataDictionary(kept, raw, s.transportDataDictionary, s.appDataDictionary); err != nil {
+		return nil, err
+	}
+	kept.ReceiveTime = msg.ReceiveTime
+	return kept, nil
 }
 
 func (s *session) logError(err error) {
@@ -829,6 +862,10 @@ func (s *session) doReject(msg *Message, rej MessageRejectError) error {
 type fixIn struct {
 	bytes       *bytes.Buffer
 	receiveTime time.Time
+
+	// pooled is true when bytes came from rawBufferPool, so the session may
+	// return it there once the message has been processed.
+	pooled bool
 }
 
 func (s *session) onDisconnect() {

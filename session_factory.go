@@ -443,6 +443,12 @@ func (f sessionFactory) newSession(
 		s.InChanCapacity = 1
 	}
 
+	if settings.HasSetting(config.ReuseIncomingMessages) {
+		if s.ReuseIncomingMessages, err = settings.BoolSetting(config.ReuseIncomingMessages); err != nil {
+			return
+		}
+	}
+
 	if f.BuildInitiators {
 		if err = f.buildInitiatorSettings(s, settings); err != nil {
 			return

@@ -91,7 +91,7 @@ func (sm *stateMachine) Incoming(session *session, m fixIn) {
 
 	session.log.OnIncoming(m.bytes.Bytes())
 
-	msg := NewMessage()
+	msg := session.incomingMessage()
 	if err := ParseMessageWithDataDictionary(msg, m.bytes, session.transportDataDictionary, session.appDataDictionary); err != nil {
 		session.log.OnEventf("Msg Parse Error: %v, %q", err.Error(), m.bytes)
 	} else {
@@ -100,6 +100,12 @@ func (sm *stateMachine) Incoming(session *session, m fixIn) {
 	}
 
 	session.peerTimer.Reset(time.Duration(float64(1.2) * float64(session.HeartBtInt)))
+
+	// Nothing holds the buffer now except msg, which is parsed into afresh
+	// for the next message.
+	if session.ReuseIncomingMessages && m.pooled {
+		releaseRawBuffer(m.bytes)
+	}
 }
 
 func (sm *stateMachine) fixMsgIn(session *session, m *Message) {
