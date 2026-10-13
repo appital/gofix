@@ -16,8 +16,9 @@
 package gofix
 
 import (
-	"context"
+	"bufio"
 	"io"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -53,41 +54,66 @@ var (
 )
 
 // messageOutCapacity is the buffer of a connection's outbound channel. A
-// session that finds it full waits for the write loop to take a message, and
-// one slot guarantees the write loop takes another after any failed send.
-const messageOutCapacity = 1
+// session that finds it full waits for the write loop to take a message. The
+// buffer lets a session hand over a backlog in one go, and the write loop then
+// writes it with a single flush.
+const messageOutCapacity = 64
 
 // writeLoop writes each message from messageOut to connection, calling ready,
-// if set, as it takes each one.
+// if set, as it takes each one. Messages already waiting are written together
+// and flushed once.
 func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, sessionID string, ready func()) {
 	limiter := rate.NewLimiter(rate.Limit(maxMessagesPerSecond), maxBurst)
-	ctx := context.Background()
 	messageCount := outgoingMessageCount.WithLabelValues(sessionID)
 	messageBytes := outgoingMessageBytes.WithLabelValues(sessionID)
+	w := bufio.NewWriter(connection)
+
+	flush := func() {
+		if err := w.Flush(); err != nil {
+			log.OnEvent(err.Error())
+		}
+	}
 
 	for {
 		msg, ok := <-messageOut
 		if !ok {
 			return
 		}
-		if ready != nil {
-			ready()
-		}
 
-		if maxMessagesPerSecond > 0 {
-			err := limiter.Wait(ctx)
-			// if we get an error from the limiter we log, but continue on to
-			// attempt to write the message to the remote party
-			if err != nil {
+		for {
+			if ready != nil {
+				ready()
+			}
+
+			if maxMessagesPerSecond > 0 {
+				// Flush what is written before waiting for the limiter, so
+				// that earlier messages are not held back too.
+				if delay := limiter.Reserve().Delay(); delay > 0 {
+					flush()
+					time.Sleep(delay)
+				}
+			}
+
+			messageCount.Inc()
+			messageBytes.Add(float64(len(msg)))
+
+			if _, err := w.Write(msg); err != nil {
 				log.OnEvent(err.Error())
 			}
+
+			select {
+			case msg, ok = <-messageOut:
+				if ok {
+					continue
+				}
+			default:
+			}
+			break
 		}
 
-		messageCount.Inc()
-		messageBytes.Add(float64(len(msg)))
-
-		if _, err := connection.Write(msg); err != nil {
-			log.OnEvent(err.Error())
+		flush()
+		if !ok {
+			return
 		}
 	}
 }

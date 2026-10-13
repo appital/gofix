@@ -11,10 +11,12 @@
 * Validating a message no longer allocates: `RejectInvalidMessage` checks field formats in place instead of building a `FieldValue` per field, duplicate tags are tracked without a per-message map, and the message type is no longer copied to a string
 * Building a message formats its checksum and body length without allocating, `SetInt` no longer allocates beyond the field itself, and a `RepeatingGroup` builds its template's tag ordering once rather than for every entry, allocates each entry and its lock together, and reads plain template fields without cloning them
 * Building a message walks each section twice instead of three times, sorts a section only when it has changed since the last build, writes under a read lock, no longer copies each section to the heap, and writes into a buffer sized exactly up front
+* The write loop writes every message already waiting before flushing, through a buffered writer, so a backlog goes out in far fewer syscalls; the outbound channel holds up to 64 messages. The read and write loops look up their Prometheus counters once per connection rather than per message
 
 ### BUG FIXES
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
 * Removing a field and then setting it again no longer writes it twice with a BodyLength that counts it once
+* A session whose write loop was busy no longer busy-waits on it, which saturated the CPU and collapsed throughput once there were more sessions than spare cores
 
 ## 0.9.12 (September 30, 2026)
 
