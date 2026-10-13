@@ -34,7 +34,7 @@ type Initiator struct {
 	storeFactory    MessageStoreFactory
 	logFactory      LogFactory
 	globalLog       Log
-	stopChan        chan interface{}
+	stopChan        chan any
 	wg              sync.WaitGroup
 	sessions        map[SessionID]*session
 	sessionFactory
@@ -42,7 +42,7 @@ type Initiator struct {
 
 // Start Initiator.
 func (i *Initiator) Start() (err error) {
-	i.stopChan = make(chan interface{})
+	i.stopChan = make(chan any)
 
 	for sessionID, settings := range i.sessionSettings {
 		// TODO: move into session factory.
@@ -117,7 +117,7 @@ func NewInitiator(app Application, storeFactory MessageStoreFactory, appSettings
 
 // waitForInSessionTime returns true if the session is in session, false if the handler should stop.
 func (i *Initiator) waitForInSessionTime(session *session) bool {
-	inSessionTime := make(chan interface{})
+	inSessionTime := make(chan any)
 	go func() {
 		session.waitForInSessionTime()
 		close(inSessionTime)
@@ -145,11 +145,9 @@ func (i *Initiator) waitForReconnectInterval(reconnectInterval time.Duration) bo
 
 func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, dialer proxy.ContextDialer) {
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		session.run()
-		wg.Done()
-	}()
+	})
 
 	defer func() {
 		session.stop()
@@ -176,7 +174,7 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 			}
 		}()
 
-		var disconnected chan interface{}
+		var disconnected chan any
 		var msgIn chan fixIn
 		var msgOut chan []byte
 
@@ -213,7 +211,7 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 		}
 
 		go readLoop(newParser(bufio.NewReader(netConn)), msgIn, session.log, session.sessionID.String())
-		disconnected = make(chan interface{})
+		disconnected = make(chan any)
 		go func() {
 			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.sessionID.String())
 			if err := netConn.Close(); err != nil {

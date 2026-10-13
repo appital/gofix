@@ -393,7 +393,7 @@ func validateField(d *datadictionary.DataDictionary,
 		case "MULTIPLESTRINGVALUE", "MULTIPLEVALUESTRING", "MULTIPLECHARVALUE":
 			// These fields carry a space-delimited set of enum tokens, each of
 			// which must be individually valid (e.g. ExecInst "1 5" = two enums).
-			for _, component := range bytes.Split(field.value, []byte{' '}) {
+			for component := range bytes.SplitSeq(field.value, []byte{' '}) {
 				if _, validValue := allowedValues[string(component)]; !validValue {
 					return ValueIsIncorrect(field.tag)
 				}

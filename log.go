@@ -27,7 +27,7 @@ type Log interface {
 	OnEvent(string)
 
 	// OnEventf log fix event according to format specifier.
-	OnEventf(string, ...interface{})
+	OnEventf(string, ...any)
 }
 
 // The LogFactory interface creates global and session specific Log instances.

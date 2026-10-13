@@ -120,7 +120,7 @@ func (r *recordingLog) OnOutgoing([]byte) {}
 
 func (r *recordingLog) OnEvent(s string) { r.events = append(r.events, s) }
 
-func (r *recordingLog) OnEventf(format string, a ...interface{}) {
+func (r *recordingLog) OnEventf(format string, a ...any) {
 	r.events = append(r.events, fmt.Sprintf(format, a...))
 }
 
@@ -139,12 +139,12 @@ func TestCompositeLogOnEventfExpandsFormatArgs(t *testing.T) {
 	tests := []struct {
 		name     string
 		format   string
-		args     []interface{}
+		args     []any
 		expected string
 	}{
-		{"single string arg", "session %s", []interface{}{"FIX.4.4"}, "session FIX.4.4"},
-		{"mixed args", "session %s seq %d", []interface{}{"FIX.4.4", 7}, "session FIX.4.4 seq 7"},
-		{"slice arg", "tags %v count %d", []interface{}{[]int{7, 9}, 2}, "tags [7 9] count 2"},
+		{"single string arg", "session %s", []any{"FIX.4.4"}, "session FIX.4.4"},
+		{"mixed args", "session %s seq %d", []any{"FIX.4.4", 7}, "session FIX.4.4 seq 7"},
+		{"slice arg", "tags %v count %d", []any{[]int{7, 9}, 2}, "tags [7 9] count 2"},
 	}
 
 	for _, tt := range tests {

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"slices"
 	"time"
 
 	"github.com/pkg/errors"
@@ -80,14 +81,7 @@ func NewWeekRangeInLocation(startTime, endTime TimeOfDay, startDay, endDay time.
 
 func (r *TimeRange) isInWeekdays(day time.Weekday) bool {
 	if len(r.weekdays) > 0 {
-		found := false
-
-		for _, weekday := range r.weekdays {
-			if day == weekday {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(r.weekdays, day)
 
 		if !found {
 			return false

@@ -155,7 +155,7 @@ func (l sqlLog) OnEvent(msg string) {
 	l.insert("event_log", msg)
 }
 
-func (l sqlLog) OnEventf(format string, v ...interface{}) {
+func (l sqlLog) OnEventf(format string, v ...any) {
 	l.insert("event_log", fmt.Sprintf(format, v...))
 }
 

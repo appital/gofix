@@ -100,7 +100,7 @@ func genEnums() {
 	gen(internal.EnumTemplate, "enum/enums.generated.go", internal.GlobalFieldTypes)
 }
 
-func gen(t *template.Template, fileOut string, data interface{}) {
+func gen(t *template.Template, fileOut string, data any) {
 	defer waitGroup.Done()
 	writer := new(bytes.Buffer)
 

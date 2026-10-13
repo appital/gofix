@@ -214,25 +214,21 @@ func TestFieldMap_GetTimeConcurrentWithSet(t *testing.T) {
 	fMap.SetField(Tag(2), FIXString("blah"))
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50000; i++ {
+	wg.Go(func() {
+		for range 50000 {
 			fMap.SetField(Tag(2), FIXString("blah"))
 		}
-	}()
+	})
 
-	for r := 0; r < 8; r++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50000; i++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 50000 {
 				if _, err := fMap.GetTime(Tag(1)); err != nil {
 					t.Error(err)
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	done := make(chan struct{})

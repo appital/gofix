@@ -42,7 +42,7 @@ func (l fileLog) OnEvent(msg string) {
 	l.eventLogger.Print(msg)
 }
 
-func (l fileLog) OnEventf(format string, v ...interface{}) {
+func (l fileLog) OnEventf(format string, v ...any) {
 	l.eventLogger.Printf(format, v...)
 }
 

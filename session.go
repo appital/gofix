@@ -57,7 +57,7 @@ type session struct {
 
 	targetDefaultApplVerID string
 
-	admin chan interface{}
+	admin chan any
 	internal.SessionSettings
 	transportDataDictionary *datadictionary.DataDictionary
 	appDataDictionary       *datadictionary.DataDictionary
@@ -102,7 +102,7 @@ func (s *session) stop() {
 	})
 }
 
-type waitChan <-chan interface{}
+type waitChan <-chan any
 
 type waitForInSessionReq struct{ rep chan<- waitChan }
 
@@ -850,7 +850,7 @@ func (s *session) onDisconnect() {
 	s.messageIn = nil
 }
 
-func (s *session) onAdmin(msg interface{}) {
+func (s *session) onAdmin(msg any) {
 	switch msg := msg.(type) {
 
 	case connect:

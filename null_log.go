@@ -17,10 +17,10 @@ package gofix
 
 type nullLog struct{}
 
-func (l nullLog) OnIncoming([]byte)                   {}
-func (l nullLog) OnOutgoing([]byte)                   {}
-func (l nullLog) OnEvent(string)                      {}
-func (l nullLog) OnEventf(_ string, _ ...interface{}) {}
+func (l nullLog) OnIncoming([]byte)           {}
+func (l nullLog) OnOutgoing([]byte)           {}
+func (l nullLog) OnEvent(string)              {}
+func (l nullLog) OnEventf(_ string, _ ...any) {}
 
 type nullLogFactory struct{}
 
