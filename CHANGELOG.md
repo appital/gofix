@@ -1,5 +1,8 @@
 ## Unreleased
 
+### BREAKING CHANGES
+* With `UseTCPProxy=Y`, every connection must now open with a PROXY protocol header; connections without one are closed instead of being accepted with the load balancer's address. A connection that sends nothing for 10 seconds is also closed. This follows from upgrading `github.com/pires/go-proxyproto` to v0.15.0
+
 ### FEATURES
 * Adds `ReuseIncomingMessages` session setting: inbound messages are parsed into one reused `Message` and their read buffers are recycled, so receiving a message no longer allocates for either. Off by default; when on, a received `*Message` is valid only until the callback returns
 

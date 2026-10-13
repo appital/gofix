@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.52
-	github.com/pires/go-proxyproto v0.7.0
+	github.com/pires/go-proxyproto v0.15.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.25.0
 	github.com/quagmt/udecimal v1.10.1

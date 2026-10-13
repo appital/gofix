@@ -17,8 +17,10 @@ package gofix
 
 import (
 	"crypto/tls"
+	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/appital/gofix/config"
 
@@ -173,4 +175,76 @@ func TestAcceptor_SetCallback(t *testing.T) {
 	assert.NotNil(t, conn)
 	assert.True(t, didUseCallback)
 	defer conn.Close()
+}
+
+func TestAcceptor_TCPProxy(t *testing.T) {
+	const proxyHeader = "PROXY TCP4 192.0.2.10 127.0.0.1 40000 5001\r\n"
+
+	logon := func() []byte {
+		msg := NewMessage()
+		msg.Header.
+			SetField(tagBeginString, FIXString(BeginStringFIX42)).
+			SetField(tagSenderCompID, FIXString("target")).
+			SetField(tagTargetCompID, FIXString("sender")).
+			SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now()}).
+			SetField(tagMsgSeqNum, FIXInt(1)).
+			SetField(tagMsgType, FIXString(msgTypeLogon))
+		msg.Body.
+			SetField(tagEncryptMethod, FIXString("0")).
+			SetField(tagHeartBtInt, FIXInt(30))
+		return msg.build()
+	}
+
+	startAcceptor := func(t *testing.T) (*Acceptor, SessionID) {
+		sessionSettings := NewSessionSettings()
+		sessionSettings.Set(config.BeginString, BeginStringFIX42)
+		sessionSettings.Set(config.SenderCompID, "sender")
+		sessionSettings.Set(config.TargetCompID, "target")
+		sessionSettings.Set(config.HeartBtInt, "30")
+
+		settings := NewSettings()
+		settings.GlobalSettings().Set(config.SocketAcceptPort, "5001")
+		settings.GlobalSettings().Set(config.UseTCPProxy, "Y")
+		sessionID, err := settings.AddSession(sessionSettings)
+		require.NoError(t, err)
+
+		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
+		require.NoError(t, err)
+		require.NoError(t, acceptor.Start())
+		t.Cleanup(acceptor.Stop)
+		return acceptor, sessionID
+	}
+
+	t.Run("connection with PROXY header reports the client address", func(t *testing.T) {
+		acceptor, sessionID := startAcceptor(t)
+
+		conn, err := net.Dial("tcp", "127.0.0.1:5001")
+		require.NoError(t, err)
+		defer conn.Close()
+		_, err = conn.Write(append([]byte(proxyHeader), logon()...))
+		require.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			addr, ok := acceptor.RemoteAddr(sessionID)
+			return ok && addr.String() == "192.0.2.10:40000"
+		}, 2*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("connection without PROXY header is rejected", func(t *testing.T) {
+		acceptor, sessionID := startAcceptor(t)
+
+		conn, err := net.Dial("tcp", "127.0.0.1:5001")
+		require.NoError(t, err)
+		defer conn.Close()
+		_, err = conn.Write(logon())
+		require.NoError(t, err)
+
+		// The acceptor closes the connection without answering the logon.
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+		_, err = conn.Read(make([]byte, 1))
+		assert.ErrorIs(t, err, io.EOF)
+
+		_, ok := acceptor.RemoteAddr(sessionID)
+		assert.False(t, ok)
+	})
 }
