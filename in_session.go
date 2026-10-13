@@ -305,7 +305,11 @@ func (state inSession) processReject(session *session, msg *Message, rej Message
 			nextState.messageStash = make(map[int]*Message)
 		}
 
-		nextState.messageStash[TypedError.ReceivedTarget] = msg
+		kept, err := session.retainIncoming(msg)
+		if err != nil {
+			return handleStateError(session, err)
+		}
+		nextState.messageStash[TypedError.ReceivedTarget] = kept
 
 		return nextState
 

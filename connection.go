@@ -93,6 +93,6 @@ func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
 		incomingMessageCount.WithLabelValues(sessionID).Inc()
 		incomingMessageBytes.WithLabelValues(sessionID).Add(float64(msg.Len()))
 
-		msgIn <- fixIn{msg, parser.lastRead}
+		msgIn <- fixIn{bytes: msg, receiveTime: parser.lastRead, pooled: true}
 	}
 }

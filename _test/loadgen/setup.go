@@ -27,6 +27,7 @@ func sessionSettings(opts options, i int, sender, target string) *gofix.SessionS
 	s.Set(config.HeartBtInt, "30")
 	s.Set(config.ResetOnLogon, "Y")
 	s.Set(config.PersistMessages, boolSetting(opts.persist))
+	s.Set(config.ReuseIncomingMessages, boolSetting(opts.reuse))
 
 	if opts.validate {
 		s.Set(config.DataDictionary, dataDictionaryPath())

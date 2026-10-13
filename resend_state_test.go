@@ -16,6 +16,7 @@
 package gofix
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -218,4 +219,50 @@ func (s *resendStateTestSuite) TestFixMsgResendWithOldSendingTime() {
 	s.fixMsgIn(s.session, msgSeqNum5)
 	s.State(resendState{})
 	s.NextTargetMsgSeqNum(1)
+}
+
+// seqRecordingApp records the MsgSeqNum of every message FromApp sees.
+type seqRecordingApp struct {
+	*MockApp
+	seqNums []int
+}
+
+func (a *seqRecordingApp) FromApp(msg *Message, sessionID SessionID) MessageRejectError {
+	seqNum, _ := msg.Header.GetInt(tagMsgSeqNum)
+	a.seqNums = append(a.seqNums, seqNum)
+	return a.MockApp.FromApp(msg, sessionID)
+}
+
+// With ReuseIncomingMessages, every inbound message is parsed into the same
+// Message, so messages stashed while a resend is outstanding must be copies:
+// by the time they are processed, the reused Message holds another message.
+func (s *resendStateTestSuite) TestFixMsgInReuseIncomingMessages() {
+	app := &seqRecordingApp{MockApp: &s.MockApp}
+	s.session.application = app
+	s.session.ReuseIncomingMessages = true
+	s.session.peerTimer = internal.NewEventTimer(func() {})
+	defer s.session.peerTimer.Stop()
+	s.session.State = inSession{}
+
+	incoming := func(msg *Message) {
+		buf := bytes.NewBuffer(msg.build())
+		s.session.Incoming(s.session, fixIn{bytes: buf, receiveTime: time.Now(), pooled: true})
+	}
+
+	// In session expects seq number 1; 2, 3 and 4 are stashed.
+	s.MockApp.On("ToAdmin")
+	s.MessageFactory.SetNextSeqNum(2)
+	incoming(s.NewOrderSingle())
+	incoming(s.NewOrderSingle())
+	incoming(s.NewOrderSingle())
+	s.State(resendState{})
+	s.NextTargetMsgSeqNum(1)
+
+	s.MessageFactory.SetNextSeqNum(1)
+	s.MockApp.On("FromApp").Return(nil)
+	incoming(s.NewOrderSingle())
+
+	s.Equal([]int{1, 2, 3, 4}, app.seqNums)
+	s.State(inSession{})
+	s.NextTargetMsgSeqNum(5)
 }

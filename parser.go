@@ -19,12 +19,30 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
 const (
 	defaultBufSize = 4096
+
+	// maxPooledRawBuffer is the largest buffer returned to rawBufferPool, so
+	// that one outsized message does not stay pinned in the pool.
+	maxPooledRawBuffer = 64 << 10
 )
+
+// rawBufferPool holds the buffers inbound messages are read into. Only
+// sessions with ReuseIncomingMessages enabled return buffers to it; otherwise
+// every Get allocates, as before.
+var rawBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// releaseRawBuffer returns an inbound message buffer to rawBufferPool. The
+// caller must not use buf, or anything parsed from it, afterwards.
+func releaseRawBuffer(buf *bytes.Buffer) {
+	if buf.Cap() <= maxPooledRawBuffer {
+		rawBufferPool.Put(buf)
+	}
+}
 
 type parser struct {
 	// Buffer is a slice of bigBuffer.
@@ -156,7 +174,8 @@ func (p *parser) ReadMessage() (msgBytes *bytes.Buffer, err error) {
 		return
 	}
 
-	msgBytes = new(bytes.Buffer)
+	msgBytes = rawBufferPool.Get().(*bytes.Buffer)
+	msgBytes.Reset()
 	msgBytes.Write(p.buffer[:index])
 	p.buffer = p.buffer[index:]
 

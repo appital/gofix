@@ -1193,4 +1193,23 @@ const (
 	// Valid Values:
 	//  - A positive integer
 	MaxMessagesPerSecond string = "MaxMessagesPerSecond"
+
+	// ReuseIncomingMessages makes the session parse every inbound message into
+	// the same Message, and recycle the buffer it was read into, rather than
+	// allocating both per message.
+	//
+	// When enabled, the *Message passed to FromAdmin, FromApp and message
+	// routes, and anything read from it without copying (GetBytes, the
+	// generated typed wrappers), is valid only until the callback returns.
+	// Copy out any values that must outlive the callback; Message.CopyInto is
+	// not a deep copy and does not make a message safe to keep.
+	//
+	// Required: No
+	//
+	// Default: N
+	//
+	// Valid Values:
+	//  - Y
+	//  - N
+	ReuseIncomingMessages string = "ReuseIncomingMessages"
 )

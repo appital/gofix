@@ -103,6 +103,25 @@ func BenchmarkParserReadMessage(b *testing.B) {
 				sinkInt = msg.Len()
 			}
 		})
+
+		// As a session with ReuseIncomingMessages does, hand each buffer back
+		// once the message is processed.
+		b.Run("mix="+name+"/recycled", func(b *testing.B) {
+			p := newParser(&loopReader{data: streamCorpus.stream})
+
+			b.SetBytes(streamCorpus.bytesPerMsg())
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				msg, err := p.ReadMessage()
+				if err != nil {
+					b.Fatal(err)
+				}
+				sinkInt = msg.Len()
+				releaseRawBuffer(msg)
+			}
+		})
 	}
 }
 

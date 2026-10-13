@@ -776,6 +776,21 @@ func (s *SessionFactorySuite) TestPersistMessages() {
 	}
 }
 
+func (s *SessionFactorySuite) TestReuseIncomingMessages() {
+	s.SetupTest()
+	session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Nil(err)
+	s.False(session.ReuseIncomingMessages, "off by default")
+
+	for setting, expected := range map[string]bool{"Y": true, "N": false} {
+		s.SetupTest()
+		s.SessionSettings.Set(config.ReuseIncomingMessages, setting)
+		session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+		s.Nil(err)
+		s.Equal(expected, session.ReuseIncomingMessages)
+	}
+}
+
 func (s *SessionFactorySuite) TestBadDictionaryPath() {
 	s.SetupTest()
 	s.SessionSettings.Set(config.DataDictionary, "file/does/not/exist.xml")

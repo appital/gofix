@@ -199,16 +199,24 @@ func BenchmarkSessionIncoming(b *testing.B) {
 		echo    bool
 		dd      *datadictionary.DataDictionary
 		persist bool
+		reuse   bool
 	}{
 		{name: "receive/dd=off", echo: false, dd: nil, persist: false},
 		{name: "receive/dd=on", echo: false, dd: dd, persist: false},
 		{name: "echo/dd=off/persist=off", echo: true, dd: nil, persist: false},
 		{name: "echo/dd=off/persist=on", echo: true, dd: nil, persist: true},
+		// ReuseIncomingMessages. The tape's buffers are not pooled, so these
+		// measure Message reuse; BenchmarkParserReadMessage's recycled
+		// variants measure the buffer half.
+		{name: "receive/dd=off/reuse=on", echo: false, dd: nil, persist: false, reuse: true},
+		{name: "receive/dd=on/reuse=on", echo: false, dd: dd, persist: false, reuse: true},
+		{name: "echo/dd=off/persist=off/reuse=on", echo: true, dd: nil, persist: false, reuse: true},
 	}
 
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			bs := newBenchSession(b, tc.echo, tc.dd, tc.persist)
+			bs.session.ReuseIncomingMessages = tc.reuse
 			bufs := bs.inbound(c)
 			now := time.Now()
 

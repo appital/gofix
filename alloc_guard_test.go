@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"testing"
+	"time"
 
 	"github.com/appital/gofix/internal/tape"
 )
@@ -142,5 +143,37 @@ func TestAllocsParseFresh(t *testing.T) {
 				sinkMsg = msg
 			})
 		})
+	}
+}
+
+// With ReuseIncomingMessages, receiving a message parses into the session's
+// reused Message instead of a fresh one; it was 12 allocations without.
+func TestAllocsSessionIncomingReused(t *testing.T) {
+	c := loadCorpus(t, tape.MixRealistic)
+	bs := newBenchSession(t, false, nil, false)
+	bs.session.ReuseIncomingMessages = true
+	bufs := bs.inbound(c)
+	now := time.Now()
+
+	i := 0
+	receive := func() {
+		idx := i % len(bufs)
+		if idx == 0 {
+			if err := bs.session.store.SetNextTargetMsgSeqNum(1); err != nil {
+				t.Fatal(err)
+			}
+		}
+		bs.session.Incoming(bs.session, fixIn{bytes: bufs[idx], receiveTime: now})
+		i++
+	}
+
+	// Grow the reused Message to its high-water mark first.
+	for range bufs {
+		receive()
+	}
+	assertAllocs(t, 1, receive)
+
+	if bs.app.received.Load() == 0 {
+		t.Fatal("no messages reached the application")
 	}
 }
