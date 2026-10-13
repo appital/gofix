@@ -600,8 +600,10 @@ func (m *Message) String() string {
 	return string(m.build())
 }
 
-func formatCheckSum(value int) string {
-	return fmt.Sprintf("%03d", value)
+// checkSumDigits returns a checksum in the range 0-255 as the three
+// zero-padded digits that CheckSum(10) requires.
+func checkSumDigits(value int) [3]byte {
+	return [3]byte{byte('0' + value/100), byte('0' + value/10%10), byte('0' + value%10)}
 }
 
 // Build constructs a []byte from a Message instance.
@@ -634,5 +636,6 @@ func (m *Message) cook(bodyLen, bodyTotal int) {
 	bodyLength := m.Header.length() + bodyLen + m.Trailer.length()
 	m.Header.SetInt(tagBodyLength, bodyLength)
 	checkSum := (m.Header.total() + bodyTotal + m.Trailer.total()) % 256
-	m.Trailer.SetString(tagCheckSum, formatCheckSum(checkSum))
+	digits := checkSumDigits(checkSum)
+	m.Trailer.SetBytes(tagCheckSum, digits[:])
 }

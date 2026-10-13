@@ -204,14 +204,14 @@ func BenchmarkFieldMap(b *testing.B) {
 	})
 }
 
-// BenchmarkFormatCheckSum isolates the per-message checksum formatting, which
-// currently goes through fmt for a value that is always 0-255.
+// BenchmarkFormatCheckSum isolates the per-message checksum formatting.
 func BenchmarkFormatCheckSum(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		sinkInt = len(formatCheckSum(i % 256))
+		digits := checkSumDigits(i % 256)
+		sinkInt = int(digits[2])
 	}
 }
 
