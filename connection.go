@@ -52,14 +52,26 @@ var (
 	}, []string{"sessionID"})
 )
 
-func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, sessionID string) {
+// messageOutCapacity is the buffer of a connection's outbound channel. A
+// session that finds it full waits for the write loop to take a message, and
+// one slot guarantees the write loop takes another after any failed send.
+const messageOutCapacity = 1
+
+// writeLoop writes each message from messageOut to connection, calling ready,
+// if set, as it takes each one.
+func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, sessionID string, ready func()) {
 	limiter := rate.NewLimiter(rate.Limit(maxMessagesPerSecond), maxBurst)
 	ctx := context.Background()
+	messageCount := outgoingMessageCount.WithLabelValues(sessionID)
+	messageBytes := outgoingMessageBytes.WithLabelValues(sessionID)
 
 	for {
 		msg, ok := <-messageOut
 		if !ok {
 			return
+		}
+		if ready != nil {
+			ready()
 		}
 
 		if maxMessagesPerSecond > 0 {
@@ -71,8 +83,8 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 			}
 		}
 
-		outgoingMessageCount.WithLabelValues(sessionID).Inc()
-		outgoingMessageBytes.WithLabelValues(sessionID).Add(float64(len(msg)))
+		messageCount.Inc()
+		messageBytes.Add(float64(len(msg)))
 
 		if _, err := connection.Write(msg); err != nil {
 			log.OnEvent(err.Error())
@@ -83,6 +95,9 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
 	defer close(msgIn)
 
+	messageCount := incomingMessageCount.WithLabelValues(sessionID)
+	messageBytes := incomingMessageBytes.WithLabelValues(sessionID)
+
 	for {
 		msg, err := parser.ReadMessage()
 		if err != nil {
@@ -90,8 +105,8 @@ func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
 			return
 		}
 
-		incomingMessageCount.WithLabelValues(sessionID).Inc()
-		incomingMessageBytes.WithLabelValues(sessionID).Add(float64(msg.Len()))
+		messageCount.Inc()
+		messageBytes.Add(float64(msg.Len()))
 
 		msgIn <- fixIn{bytes: msg, receiveTime: parser.lastRead, pooled: true}
 	}

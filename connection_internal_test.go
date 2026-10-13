@@ -19,6 +19,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestWriteLoop(t *testing.T) {
@@ -31,7 +33,7 @@ func TestWriteLoop(t *testing.T) {
 		msgOut <- []byte("test msg 3")
 		close(msgOut)
 	}()
-	writeLoop(writer, msgOut, nullLog{}, 0, "sessionID")
+	writeLoop(writer, msgOut, nullLog{}, 0, "sessionID", nil)
 
 	expected := "test msg 1 test msg 2 test msg 3"
 
@@ -70,4 +72,39 @@ func TestReadLoop(t *testing.T) {
 			t.Errorf("Expected %v got %v", test.expectedMsg, msg.bytes.String())
 		}
 	}
+}
+
+// A session that finds messageOut full must not wake itself to retry, which
+// spun it in a busy loop while the write loop was busy; the write loop wakes it
+// once it takes a message.
+func TestSendQueuedWaitsForWriter(t *testing.T) {
+	msgOut := make(chan []byte, messageOutCapacity)
+	s := &session{log: nullLog{}, messageOut: msgOut, messageEvent: make(chan bool, 1)}
+	woken := func() bool {
+		select {
+		case <-s.messageEvent:
+			return true
+		default:
+			return false
+		}
+	}
+
+	msgOut <- []byte("a")
+	s.toSend = [][]byte{[]byte("b"), []byte("c")}
+
+	s.sendQueued(false)
+	assert.Len(t, s.toSend, 2, "nothing fits while messageOut is full")
+	assert.False(t, woken(), "a full messageOut must not wake the session")
+
+	for _, want := range []string{"a", "b"} {
+		assert.Equal(t, want, string(<-msgOut))
+		s.writerReady()
+		assert.True(t, woken(), "taking %q must wake the waiting session", want)
+		s.sendQueued(false)
+	}
+	assert.Empty(t, s.toSend)
+
+	assert.Equal(t, "c", string(<-msgOut))
+	s.writerReady()
+	assert.False(t, woken(), "nothing was waiting, so the session must not be woken")
 }

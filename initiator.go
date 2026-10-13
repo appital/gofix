@@ -204,7 +204,7 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 		}
 
 		msgIn = make(chan fixIn, session.InChanCapacity)
-		msgOut = make(chan []byte)
+		msgOut = make(chan []byte, messageOutCapacity)
 		if err := session.connect(msgIn, msgOut); err != nil {
 			session.log.OnEventf("Failed to initiate: %v", err)
 			goto reconnect
@@ -213,7 +213,7 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 		go readLoop(newParser(bufio.NewReader(netConn)), msgIn, session.log, session.sessionID.String())
 		disconnected = make(chan any)
 		go func() {
-			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.sessionID.String())
+			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.sessionID.String(), session.writerReady)
 			if err := netConn.Close(); err != nil {
 				session.log.OnEvent(err.Error())
 			}
