@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/appital/gofix/datadictionary"
@@ -41,6 +42,10 @@ type session struct {
 
 	// Mutex for access to toSend.
 	sendMutex sync.Mutex
+	// awaitingWriter is set while a send to messageOut may find it full, so
+	// that the write loop wakes the session through writerReady once it takes
+	// a message.
+	awaitingWriter atomic.Bool
 	// Mutex to prevent messages being sent when resendRequest is active
 	// Must be locked before sendMutex to prevent a potential deadlock
 	resendMutex sync.RWMutex
@@ -446,7 +451,12 @@ func (s *session) sendQueued(blockUntilSent bool) {
 	for i, msgBytes := range s.toSend {
 		if !s.sendBytes(msgBytes, blockUntilSent) {
 			s.toSend = s.toSend[i:]
-			s.notifyMessageOut()
+			// A full messageOut wakes the session through writerReady once
+			// there is room. Waking it here instead would have it retry in a
+			// busy loop for as long as the write loop is busy.
+			if s.messageOut == nil {
+				s.notifyMessageOut()
+			}
 			return
 		}
 	}
@@ -479,13 +489,26 @@ func (s *session) sendBytes(msg []byte, blockUntilSent bool) bool {
 		return true
 	}
 
+	// Set before trying, so that if messageOut is full the write loop is
+	// certain to see it when it next takes a message.
+	s.awaitingWriter.Store(true)
 	select {
 	case s.messageOut <- msg:
+		s.awaitingWriter.Store(false)
 		s.log.OnOutgoing(msg)
 		s.stateTimer.Reset(s.HeartBtInt)
 		return true
 	default:
 		return false
+	}
+}
+
+// writerReady is called by the write loop each time it takes a message from
+// messageOut. If a send has found messageOut full since, it wakes the session
+// to send the rest of its queue.
+func (s *session) writerReady() {
+	if s.awaitingWriter.Load() && s.awaitingWriter.Swap(false) {
+		s.notifyMessageOut()
 	}
 }
 
