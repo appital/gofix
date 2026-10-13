@@ -18,6 +18,7 @@ package gofix
 import (
 	"bytes"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -312,8 +313,9 @@ func (m *FieldMap) SetBool(tag Tag, value bool) *FieldMap {
 
 // SetInt is a SetField wrapper for int fields.
 func (m *FieldMap) SetInt(tag Tag, value int) *FieldMap {
-	v := FIXInt(value)
-	return m.SetBytes(tag, v.Write())
+	// SetBytes copies the value, so it can be formatted on the stack.
+	var buf [20]byte
+	return m.SetBytes(tag, strconv.AppendInt(buf[:0], int64(value), 10))
 }
 
 // SetString is a SetField wrapper for string fields.

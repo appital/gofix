@@ -92,6 +92,24 @@ func TestAllocsValidate(t *testing.T) {
 	}
 }
 
+// Adding an entry to a RepeatingGroup costs only the Group itself: the
+// template's tag ordering is built once per RepeatingGroup, not per entry.
+func TestAllocsRepeatingGroupAdd(t *testing.T) {
+	rg := NewRepeatingGroup(Tag(268), GroupTemplate{
+		GroupElement(279), GroupElement(269), GroupElement(55), GroupElement(270),
+		GroupElement(271), GroupElement(272), GroupElement(273), GroupElement(290),
+		GroupElement(346), GroupElement(1023),
+	})
+
+	// Grow the groups slice first so append does not reallocate while counting.
+	for range 200 {
+		rg.Add()
+	}
+	rg.Reset()
+
+	assertAllocs(t, 1, func() { rg.Add() })
+}
+
 // Probing for an absent field must not pay for a formatted reject error. Tags
 // below 256 box without allocating; larger ones cost one small allocation.
 func TestAllocsFieldMapMiss(t *testing.T) {

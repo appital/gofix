@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 )
 
 // GroupItem interface is used to construct repeating group templates.
@@ -74,11 +75,28 @@ func (gt GroupTemplate) Clone() GroupTemplate {
 // Group is a group of fields occurring in a repeating group.
 type Group struct{ FieldMap }
 
+// groupWithLock lets one allocation cover a Group and its lock.
+type groupWithLock struct {
+	Group
+	lock sync.RWMutex
+}
+
+// newGroup returns an empty Group ordered by ordering.
+func newGroup(ordering tagOrder) *Group {
+	gl := new(groupWithLock)
+	gl.initWithLock(ordering, &gl.lock)
+	return &gl.Group
+}
+
 // RepeatingGroup is a FIX Repeating Group type.
 type RepeatingGroup struct {
 	tag      Tag
 	template GroupTemplate
 	groups   []*Group
+
+	// order is the template's tag ordering, built on first use and shared by
+	// every Group in this RepeatingGroup.
+	order tagOrder
 }
 
 // NewRepeatingGroup returns an initilized RepeatingGroup instance.
@@ -114,8 +132,7 @@ func (f RepeatingGroup) Get(i int) *Group {
 
 // Add appends a new group to the RepeatingGroup and returns the new Group.
 func (f *RepeatingGroup) Add() *Group {
-	g := new(Group)
-	g.initWithOrdering(f.groupTagOrder())
+	g := newGroup(f.groupTagOrder())
 
 	// The entries of a group are usually alike, so expect as many fields as
 	// the previous one has.
@@ -157,22 +174,31 @@ func (f RepeatingGroup) Write() []TagValue {
 func (f RepeatingGroup) findItemInGroupTemplate(t Tag) (item GroupItem, ok bool) {
 	for _, templateField := range f.template {
 		if t == templateField.Tag() {
-			ok = true
-			item = templateField.Clone()
-			break
+			// A single field holds no state, so it can be used as is; cloning
+			// it would only box a copy into a new interface value.
+			if _, isElement := templateField.(protoGroupElement); isElement {
+				return templateField, true
+			}
+			return templateField.Clone(), true
 		}
 	}
 
 	return
 }
 
-func (f RepeatingGroup) groupTagOrder() tagOrder {
-	tagMap := make(map[Tag]int)
+// groupTagOrder returns the ordering of the template's tags. It is built once
+// per RepeatingGroup, since the template does not change.
+func (f *RepeatingGroup) groupTagOrder() tagOrder {
+	if f.order != nil {
+		return f.order
+	}
+
+	tagMap := make(map[Tag]int, len(f.template))
 	for i, f := range f.template {
 		tagMap[f.Tag()] = i
 	}
 
-	return func(i, j Tag) bool {
+	f.order = func(i, j Tag) bool {
 		orderi := math.MaxInt32
 		orderj := math.MaxInt32
 
@@ -186,6 +212,7 @@ func (f RepeatingGroup) groupTagOrder() tagOrder {
 
 		return orderi < orderj
 	}
+	return f.order
 }
 
 func (f RepeatingGroup) delimiter() Tag {
@@ -208,8 +235,7 @@ func (f *RepeatingGroup) Read(tv []TagValue) ([]TagValue, error) {
 
 	tv = tv[1:cap(tv)]
 	tagOrdering := f.groupTagOrder()
-	group := new(Group)
-	group.initWithOrdering(tagOrdering)
+	var group *Group
 	for len(tv) > 0 {
 		gi, ok := f.findItemInGroupTemplate(tv[0].tag)
 		if !ok {
@@ -222,10 +248,15 @@ func (f *RepeatingGroup) Read(tv []TagValue) ([]TagValue, error) {
 		}
 
 		if f.isDelimiter(gi.Tag()) {
-			group = new(Group)
-			group.initWithOrdering(tagOrdering)
+			group = newGroup(tagOrdering)
 
 			f.groups = append(f.groups, group)
+		}
+
+		// Fields before the first delimiter belong to no entry, so they are
+		// dropped.
+		if group == nil {
+			continue
 		}
 
 		group.rwLock.Lock()

@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -613,4 +614,13 @@ func checkFieldString(s *MessageSuite, fields FieldMap, tag int, expected string
 	toCheck, err := fields.GetString(Tag(tag))
 	s.NoError(err)
 	s.Equal(expected, toCheck)
+}
+
+func TestCheckSumDigits(t *testing.T) {
+	for v := 0; v < 256; v++ {
+		digits := checkSumDigits(v)
+		if got, want := string(digits[:]), fmt.Sprintf("%03d", v); got != want {
+			t.Errorf("checkSumDigits(%v) = %q, want %q", v, got, want)
+		}
+	}
 }

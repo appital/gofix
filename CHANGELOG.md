@@ -9,6 +9,7 @@
 * `TagValue` values set through `FieldMap` setters are now copies; they no longer alias the slice passed in
 * `NewMessage` is one allocation instead of seven, parsing presizes a fresh message's field storage from its field count, and setting fields carves their storage from chunks rather than allocating each one
 * Validating a message no longer allocates: `RejectInvalidMessage` checks field formats in place instead of building a `FieldValue` per field, duplicate tags are tracked without a per-message map, and the message type is no longer copied to a string
+* Building a message formats its checksum and body length without allocating, `SetInt` no longer allocates beyond the field itself, and a `RepeatingGroup` builds its template's tag ordering once rather than for every entry, allocates each entry and its lock together, and reads plain template fields without cloning them
 
 ### BUG FIXES
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
