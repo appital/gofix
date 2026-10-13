@@ -63,6 +63,35 @@ func TestAllocsParseWithDataDictionaryReused(t *testing.T) {
 	})
 }
 
+// Validating a well-formed message must not allocate, including with
+// RejectInvalidMessage, which used to build a FieldValue per field.
+func TestAllocsValidate(t *testing.T) {
+	c := loadCorpus(t, tape.MixRealistic)
+	dd := corpusDD(t)
+	var parsed []*Message
+	for _, buf := range c.buffers() {
+		msg := NewMessage()
+		if err := ParseMessageWithDataDictionary(msg, buf, nil, dd); err != nil {
+			t.Fatal(err)
+		}
+		parsed = append(parsed, msg)
+	}
+
+	for _, reject := range []bool{false, true} {
+		settings := defaultValidatorSettings
+		settings.RejectInvalidMessage = reject
+		validator := NewValidator(settings, dd, nil)
+
+		i := 0
+		assertAllocs(t, 0, func() {
+			if err := validator.Validate(parsed[i%len(parsed)]); err != nil {
+				t.Fatal(err)
+			}
+			i++
+		})
+	}
+}
+
 // Probing for an absent field must not pay for a formatted reject error. Tags
 // below 256 box without allocating; larger ones cost one small allocation.
 func TestAllocsFieldMapMiss(t *testing.T) {

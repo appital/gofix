@@ -8,6 +8,10 @@
 * Looking up an absent field no longer formats a reject error up front, reverse-routing a message no longer round-trips its routing fields through strings, and setting a field takes one allocation instead of two
 * `TagValue` values set through `FieldMap` setters are now copies; they no longer alias the slice passed in
 * `NewMessage` is one allocation instead of seven, parsing presizes a fresh message's field storage from its field count, and setting fields carves their storage from chunks rather than allocating each one
+* Validating a message no longer allocates: `RejectInvalidMessage` checks field formats in place instead of building a `FieldValue` per field, duplicate tags are tracked without a per-message map, and the message type is no longer copied to a string
+
+### BUG FIXES
+* `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
 
 ## 0.9.12 (September 30, 2026)
 

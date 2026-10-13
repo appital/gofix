@@ -77,32 +77,38 @@ func NewValidator(settings ValidatorSettings, appDataDictionary, transportDataDi
 
 // Validate tests the message against the provided data dictionary.
 func (v *fixValidator) Validate(msg *Message) MessageRejectError {
-	if !msg.Header.Has(tagMsgType) {
+	rawMsgType, err := msg.Header.GetBytes(tagMsgType)
+	if err != nil {
 		return RequiredTagMissing(tagMsgType)
 	}
-	msgType, err := msg.Header.GetString(tagMsgType)
-	if err != nil {
-		return err
-	}
 
-	return validateFIX(v.dataDictionary, v.settings, msgType, msg)
+	return validateFIX(v.dataDictionary, v.settings, msgTypeString(v.dataDictionary, rawMsgType), msg)
 }
 
 // Validate tests the message against the provided transport and app data dictionaries.
 // If the message is an admin message, it will be validated against the transport data dictionary.
 func (v *fixtValidator) Validate(msg *Message) MessageRejectError {
-	if !msg.Header.Has(tagMsgType) {
+	rawMsgType, err := msg.Header.GetBytes(tagMsgType)
+	if err != nil {
 		return RequiredTagMissing(tagMsgType)
 	}
-	msgType, err := msg.Header.GetString(tagMsgType)
-	if err != nil {
-		return err
-	}
 
-	if isAdminMessageType([]byte(msgType)) {
-		return validateFIX(v.transportDataDictionary, v.settings, msgType, msg)
+	if isAdminMessageType(rawMsgType) {
+		return validateFIX(v.transportDataDictionary, v.settings, msgTypeString(v.transportDataDictionary, rawMsgType), msg)
 	}
-	return validateFIXT(v.transportDataDictionary, v.appDataDictionary, v.settings, msgType, msg)
+	return validateFIXT(v.transportDataDictionary, v.appDataDictionary, v.settings, msgTypeString(v.appDataDictionary, rawMsgType), msg)
+}
+
+// msgTypeString returns rawMsgType as a string. When d defines the message
+// type, the dictionary's own copy of the string is returned so that validating
+// a known message type does not allocate.
+func msgTypeString(d *datadictionary.DataDictionary, rawMsgType []byte) string {
+	if d != nil {
+		if def, ok := d.Messages[string(rawMsgType)]; ok {
+			return def.MsgType
+		}
+	}
+	return string(rawMsgType)
 }
 
 func validateFIX(d *datadictionary.DataDictionary, settings ValidatorSettings, msgType string, msg *Message) MessageRejectError {
@@ -170,7 +176,7 @@ func validateMsgType(d *datadictionary.DataDictionary, msgType string, _ *Messag
 
 func validateWalk(transportDD *datadictionary.DataDictionary, appDD *datadictionary.DataDictionary, settings ValidatorSettings, msgType string, msg *Message) MessageRejectError {
 	remainingFields := msg.fields
-	iteratedTags := make(datadictionary.TagSet)
+	var iteratedTags seenTags
 
 	var messageDef *datadictionary.MessageDef
 	var fieldDef *datadictionary.FieldDef
@@ -190,10 +196,9 @@ func validateWalk(transportDD *datadictionary.DataDictionary, appDD *datadiction
 			messageDef = appDD.Messages[msgType]
 		}
 
-		if _, duplicate := iteratedTags[int(tag)]; duplicate {
+		if iteratedTags.visit(tag) {
 			return tagAppearsMoreThanOnce(tag)
 		}
-		iteratedTags.Add(int(tag))
 
 		if fieldDef, ok = messageDef.Fields[int(tag)]; !ok {
 			if !checkFieldNotDefined(settings, tag) {
@@ -213,6 +218,37 @@ func validateWalk(transportDD *datadictionary.DataDictionary, appDD *datadiction
 	}
 
 	return nil
+}
+
+// seenTagsBitsetSize is the number of tags that seenTags tracks in its bitset.
+// It covers the standard FIX tags and most of the user-defined range.
+const seenTagsBitsetSize = 8192
+
+// seenTags records the tags visited while walking a message. Tags below
+// seenTagsBitsetSize are kept in a fixed-size bitset, so the common case needs
+// no allocation; higher tags fall back to a map created on first use.
+type seenTags struct {
+	low  [seenTagsBitsetSize / 64]uint64
+	high map[Tag]struct{}
+}
+
+// visit marks tag as seen and reports whether it had already been seen.
+func (s *seenTags) visit(tag Tag) bool {
+	if tag >= 0 && tag < seenTagsBitsetSize {
+		word, bit := tag/64, uint64(1)<<(tag%64)
+		seen := s.low[word]&bit != 0
+		s.low[word] |= bit
+		return seen
+	}
+
+	if _, seen := s.high[tag]; seen {
+		return true
+	}
+	if s.high == nil {
+		s.high = make(map[Tag]struct{})
+	}
+	s.high[tag] = struct{}{}
+	return false
 }
 
 func validateVisitField(fieldDef *datadictionary.FieldDef, fields []TagValue) ([]TagValue, MessageRejectError) {
@@ -405,76 +441,39 @@ func validateField(d *datadictionary.DataDictionary,
 		}
 	}
 
-	var prototype FieldValue
-	switch fieldType.Type {
-	case "MULTIPLESTRINGVALUE", "MULTIPLEVALUESTRING":
-		fallthrough
-	case "MULTIPLECHARVALUE":
-		fallthrough
-	case "CHAR":
-		fallthrough
-	case "CURRENCY":
-		fallthrough
-	case "DATA":
-		fallthrough
-	case "MONTHYEAR":
-		fallthrough
-	case "LOCALMKTDATE", "DATE":
-		fallthrough
-	case "EXCHANGE":
-		fallthrough
-	case "LANGUAGE":
-		fallthrough
-	case "XMLDATA":
-		fallthrough
-	case "COUNTRY":
-		fallthrough
-	case "UTCTIMEONLY":
-		fallthrough
-	case "UTCDATEONLY", "UTCDATE":
-		fallthrough
-	case "TZTIMEONLY":
-		fallthrough
-	case "TZTIMESTAMP":
-		fallthrough
-	case "STRING":
-		prototype = new(FIXString)
-
-	case "BOOLEAN":
-		prototype = new(FIXBoolean)
-
-	case "LENGTH":
-		fallthrough
-	case "DAYOFMONTH":
-		fallthrough
-	case "NUMINGROUP":
-		fallthrough
-	case "SEQNUM":
-		fallthrough
-	case "INT":
-		prototype = new(FIXInt)
-
-	case "UTCTIMESTAMP", "TIME":
-		prototype = new(FIXUTCTimestamp)
-
-	case "QTY", "QUANTITY":
-		fallthrough
-	case "AMT":
-		fallthrough
-	case "PRICE":
-		fallthrough
-	case "PRICEOFFSET":
-		fallthrough
-	case "PERCENTAGE":
-		fallthrough
-	case "FLOAT":
-		prototype = new(FIXFloat)
-
-	}
-
-	if err := prototype.Read(field.value); err != nil {
+	if !validFieldFormat(fieldType.Type, field.value) {
 		return IncorrectDataFormatForValue(field.tag)
 	}
 
 	return nil
+}
+
+// validFieldFormat reports whether value is well formed for the data
+// dictionary type fieldType. Values are read into concrete locals rather than
+// through a FieldValue, so checking a valid field does not allocate.
+func validFieldFormat(fieldType string, value []byte) bool {
+	switch fieldType {
+	case "BOOLEAN":
+		var v FIXBoolean
+		return v.Read(value) == nil
+
+	case "LENGTH", "DAYOFMONTH", "NUMINGROUP", "SEQNUM", "INT":
+		var v FIXInt
+		return v.Read(value) == nil
+
+	case "UTCTIMESTAMP", "TIME":
+		var v FIXUTCTimestamp
+		return v.Read(value) == nil
+
+	case "QTY", "QUANTITY", "AMT", "PRICE", "PRICEOFFSET", "PERCENTAGE", "FLOAT":
+		var v FIXFloat
+		return v.Read(value) == nil
+
+	default:
+		// The string-like types (STRING, CHAR, CURRENCY, DATA, the date and
+		// time-only types and so on) accept any non-empty value, which
+		// validateField has already checked. Types this switch does not
+		// know are treated the same way.
+		return true
+	}
 }
