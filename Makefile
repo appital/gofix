@@ -90,11 +90,12 @@ LOAD_WARMUP ?= 5s
 LOAD_RATE ?= 5000
 LOAD_SESSIONS ?= 1
 LOAD_MIX ?= orderflow
+LOAD_SCENARIO ?= orders
 
 # Run the full-stack load test and collect every profile.
 loadtest: build-loadgen
 	mkdir -p .bench
-	cd _test; ./loadgen_bin \
+	cd _test; ./loadgen_bin -scenario=$(LOAD_SCENARIO) \
 		-duration=$(LOAD_DURATION) -warmup=$(LOAD_WARMUP) \
 		-rate=$(LOAD_RATE) -sessions=$(LOAD_SESSIONS) -mix=$(LOAD_MIX) \
 		-cpuprofile=../.bench/loadgen-cpu.prof \

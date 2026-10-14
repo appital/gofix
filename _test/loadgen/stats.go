@@ -204,7 +204,11 @@ func (r results) writeText(w io.Writer) {
 		fmt.Fprintf(w, "  unmatched      %d replies could not be timed\n", r.Unmatched)
 	}
 
-	fmt.Fprintf(w, "\nround-trip latency (%d samples)\n", r.LatencySamples)
+	latency := "round-trip"
+	if r.Config["scenario"] == scenarioIOI {
+		latency = "one-way"
+	}
+	fmt.Fprintf(w, "\n%s latency (%d samples)\n", latency, r.LatencySamples)
 	fmt.Fprintf(w, "  mean           %v\n", time.Duration(r.LatencyMeanNs))
 	fmt.Fprintf(w, "  p50            %v\n", time.Duration(r.LatencyP50Ns))
 	fmt.Fprintf(w, "  p90            %v\n", time.Duration(r.LatencyP90Ns))

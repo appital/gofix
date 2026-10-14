@@ -231,6 +231,9 @@ func corpusDD(tb testing.TB) *datadictionary.DataDictionary {
 // forEachMsgType runs fn as a sub-benchmark per message class, plus once over
 // the whole tape. Per-class numbers say where cost lives; the tape number is
 // the one to track over time.
+//
+// IOIs are not part of the realistic tape, so their class is drawn from the IOI
+// corpus instead. That adds msgtype=IOI without moving the tape number.
 func forEachMsgType(b *testing.B, c *corpus, fn func(b *testing.B, c *corpus)) {
 	b.Helper()
 
@@ -242,6 +245,9 @@ func forEachMsgType(b *testing.B, c *corpus, fn func(b *testing.B, c *corpus)) {
 		b.Run("msgtype="+msgTypeName(msgType), func(b *testing.B) { fn(b, sub) })
 	}
 
+	ioi := loadCorpus(b, tape.MixIOI).subset(tape.MsgTypeIOI)
+	b.Run("msgtype="+msgTypeName(tape.MsgTypeIOI), func(b *testing.B) { fn(b, ioi) })
+
 	b.Run("tape", func(b *testing.B) { fn(b, c) })
 }
 
@@ -251,6 +257,8 @@ func msgTypeName(msgType string) string {
 	switch msgType {
 	case tape.MsgTypeHeartbeat:
 		return "Heartbeat"
+	case tape.MsgTypeIOI:
+		return "IOI"
 	case tape.MsgTypeExecutionReport:
 		return "ExecutionReport"
 	case tape.MsgTypeNewOrderSingle:

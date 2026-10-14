@@ -18,6 +18,7 @@ package tape
 // Message types used by the tape. Values match FIX MsgType (tag 35).
 const (
 	MsgTypeHeartbeat                    = "0"
+	MsgTypeIOI                          = "6"
 	MsgTypeExecutionReport              = "8"
 	MsgTypeNewOrderSingle               = "D"
 	MsgTypeOrderCancelRequest           = "F"
@@ -112,4 +113,16 @@ const (
 	TagSecurityAltID       = 455
 	TagSecurityAltIDSource = 456
 	TagTradingSessionID    = 336
+	TagIOIID               = 23
+	TagIOIQltyInd          = 25
+	TagIOIRefID            = 26
+	TagIOIQty              = 27
+	TagIOITransType        = 28
+	TagValidUntilTime      = 62
+	TagIOIQualifier        = 104
+	TagNoIOIQualifiers     = 199
+	TagNoRoutingIDs        = 215
+	TagRoutingType         = 216
+	TagRoutingID           = 217
+	TagPriceType           = 423
 )
