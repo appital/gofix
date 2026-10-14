@@ -217,36 +217,71 @@ func BenchmarkSessionIncoming(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			bs := newBenchSession(b, tc.echo, tc.dd, tc.persist)
 			bs.session.ReuseIncomingMessages = tc.reuse
-			bufs := bs.inbound(c)
-			now := time.Now()
-
-			b.SetBytes(c.bytesPerMsg())
-			b.ReportAllocs()
-			b.ResetTimer()
-
-			for i := 0; i < b.N; i++ {
-				idx := i % len(bufs)
-
-				// The tape is replayed in a loop, so rewind the expected
-				// sequence number each time it wraps rather than per message.
-				if idx == 0 {
-					b.StopTimer()
-					if err := bs.session.store.SetNextTargetMsgSeqNum(1); err != nil {
-						b.Fatal(err)
-					}
-					b.StartTimer()
-				}
-
-				bs.session.Incoming(bs.session, fixIn{bytes: bufs[idx], receiveTime: now})
-			}
-
-			b.StopTimer()
-			if bs.app.received.Load() == 0 {
-				b.Fatal("no messages reached the application - the session rejected the tape")
-			}
-			b.ReportMetric(float64(bs.app.received.Load())/float64(b.N), "delivered/op")
+			replayIncoming(b, bs, c)
 		})
 	}
+}
+
+// BenchmarkSessionIncomingIOI is BenchmarkSessionIncoming for a counterparty
+// streaming Indications of Interest at us: one-way traffic, nothing echoed, so
+// the cost is entirely parse, verify, validate and delivery.
+func BenchmarkSessionIncomingIOI(b *testing.B) {
+	c := loadCorpus(b, tape.MixIOI)
+	dd := corpusDD(b)
+
+	cases := []struct {
+		name  string
+		dd    *datadictionary.DataDictionary
+		reuse bool
+	}{
+		{name: "receive/dd=off", dd: nil},
+		{name: "receive/dd=on", dd: dd},
+		{name: "receive/dd=off/reuse=on", dd: nil, reuse: true},
+		{name: "receive/dd=on/reuse=on", dd: dd, reuse: true},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			bs := newBenchSession(b, false, tc.dd, false)
+			bs.session.ReuseIncomingMessages = tc.reuse
+			replayIncoming(b, bs, c)
+		})
+	}
+}
+
+// replayIncoming feeds the corpus through bs.session.Incoming in a loop, b.N
+// messages in all, and reports how many reached the application per message.
+func replayIncoming(b *testing.B, bs *benchSession, c *corpus) {
+	b.Helper()
+
+	bufs := bs.inbound(c)
+	now := time.Now()
+
+	b.SetBytes(c.bytesPerMsg())
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		idx := i % len(bufs)
+
+		// The tape is replayed in a loop, so rewind the expected
+		// sequence number each time it wraps rather than per message.
+		if idx == 0 {
+			b.StopTimer()
+			if err := bs.session.store.SetNextTargetMsgSeqNum(1); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+		}
+
+		bs.session.Incoming(bs.session, fixIn{bytes: bufs[idx], receiveTime: now})
+	}
+
+	b.StopTimer()
+	if bs.app.received.Load() == 0 {
+		b.Fatal("no messages reached the application - the session rejected the tape")
+	}
+	b.ReportMetric(float64(bs.app.received.Load())/float64(b.N), "delivered/op")
 }
 
 // BenchmarkSessionOutbound measures queueForSend: header population, ToApp

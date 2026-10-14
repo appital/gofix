@@ -25,17 +25,23 @@ import (
 
 func readable(b []byte) string { return strings.ReplaceAll(string(b), "\x01", "|") }
 
+// checkedMixes are the corpora the correctness gates below run over: every mix
+// a benchmark draws messages from.
+var checkedMixes = []tape.Mix{tape.MixRealistic, tape.MixIOI}
+
 // TestCorpusBuildMatchesWire is the harness's own correctness gate. The tape's
 // encoder and the library's builder are written independently, so agreement
 // between them means the corpus really is what it claims to be.
 func TestCorpusBuildMatchesWire(t *testing.T) {
-	c := loadCorpus(t, tape.MixRealistic)
+	for _, mix := range checkedMixes {
+		c := loadCorpus(t, mix)
 
-	for i, msg := range c.messages {
-		got := msg.build()
-		if !bytes.Equal(got, c.wire[i]) {
-			t.Fatalf("entry %d (MsgType %q) build/wire mismatch\n build: %s\n  wire: %s",
-				i, c.entries[i].MsgType, readable(got), readable(c.wire[i]))
+		for i, msg := range c.messages {
+			got := msg.build()
+			if !bytes.Equal(got, c.wire[i]) {
+				t.Fatalf("entry %d (MsgType %q) build/wire mismatch\n build: %s\n  wire: %s",
+					i, c.entries[i].MsgType, readable(got), readable(c.wire[i]))
+			}
 		}
 	}
 }
@@ -44,19 +50,21 @@ func TestCorpusBuildMatchesWire(t *testing.T) {
 // bytes survive the round trip. This exercises the exact parse->build path the
 // benchmarks measure.
 func TestCorpusRoundTrip(t *testing.T) {
-	c := loadCorpus(t, tape.MixRealistic)
-	dd := corpusDD(t)
+	for _, mix := range checkedMixes {
+		c := loadCorpus(t, mix)
+		dd := corpusDD(t)
 
-	for i, w := range c.wire {
-		msg := NewMessage()
-		if err := ParseMessageWithDataDictionary(msg, bytes.NewBuffer(w), nil, dd); err != nil {
-			t.Fatalf("entry %d (MsgType %q): parse failed: %v\n%s",
-				i, c.entries[i].MsgType, err, readable(w))
-		}
+		for i, w := range c.wire {
+			msg := NewMessage()
+			if err := ParseMessageWithDataDictionary(msg, bytes.NewBuffer(w), nil, dd); err != nil {
+				t.Fatalf("entry %d (MsgType %q): parse failed: %v\n%s",
+					i, c.entries[i].MsgType, err, readable(w))
+			}
 
-		if got := msg.build(); !bytes.Equal(got, w) {
-			t.Fatalf("entry %d (MsgType %q) round-trip mismatch\n   got: %s\n  want: %s",
-				i, c.entries[i].MsgType, readable(got), readable(w))
+			if got := msg.build(); !bytes.Equal(got, w) {
+				t.Fatalf("entry %d (MsgType %q) round-trip mismatch\n   got: %s\n  want: %s",
+					i, c.entries[i].MsgType, readable(got), readable(w))
+			}
 		}
 	}
 }
@@ -66,19 +74,21 @@ func TestCorpusRoundTrip(t *testing.T) {
 // which would make the validation benchmarks measure the reject path instead of
 // the happy path.
 func TestCorpusValidates(t *testing.T) {
-	c := loadCorpus(t, tape.MixRealistic)
-	dd := corpusDD(t)
-	validator := NewValidator(defaultValidatorSettings, dd, nil)
+	for _, mix := range checkedMixes {
+		c := loadCorpus(t, mix)
+		dd := corpusDD(t)
+		validator := NewValidator(defaultValidatorSettings, dd, nil)
 
-	for i, w := range c.wire {
-		msg := NewMessage()
-		if err := ParseMessageWithDataDictionary(msg, bytes.NewBuffer(w), nil, dd); err != nil {
-			t.Fatalf("entry %d: parse failed: %v", i, err)
-		}
+		for i, w := range c.wire {
+			msg := NewMessage()
+			if err := ParseMessageWithDataDictionary(msg, bytes.NewBuffer(w), nil, dd); err != nil {
+				t.Fatalf("entry %d: parse failed: %v", i, err)
+			}
 
-		if err := validator.Validate(msg); err != nil {
-			t.Errorf("entry %d (MsgType %q) rejected: %v (tag %v)\n%s",
-				i, c.entries[i].MsgType, err, err.RefTagID(), readable(w))
+			if err := validator.Validate(msg); err != nil {
+				t.Errorf("entry %d (MsgType %q) rejected: %v (tag %v)\n%s",
+					i, c.entries[i].MsgType, err, err.RefTagID(), readable(w))
+			}
 		}
 	}
 }
@@ -94,6 +104,10 @@ func TestCorpusShape(t *testing.T) {
 		if len(sub.entries) == 0 {
 			t.Errorf("MsgType %q absent from corpus of %d entries", msgType, corpusSize)
 		}
+	}
+
+	if ioi := loadCorpus(t, tape.MixIOI).subset(tape.MsgTypeIOI); len(ioi.entries) == 0 {
+		t.Errorf("no IOIs in the IOI corpus of %d entries", corpusSize)
 	}
 
 	md := c.subset(tape.MsgTypeMarketDataIncrementalRefresh)

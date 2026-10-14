@@ -1,6 +1,10 @@
 // Command loadgen drives a gofix acceptor and initiator against each other
-// over loopback TCP at a controlled rate, and reports throughput, round-trip
-// latency and allocation per message.
+// over loopback TCP at a controlled rate, and reports throughput, latency and
+// allocation per message.
+//
+// Two scenarios are modelled. "orders" has the initiator send orders and time
+// the round trip to each ExecutionReport. "ioi" has the acceptor stream
+// Indications of Interest one way to the initiator, and times their delivery.
 //
 // It lives under _test/ because it imports the generated gen/... packages,
 // which are build artifacts excluded from the module's normal package set.
@@ -19,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -32,6 +37,7 @@ import (
 )
 
 type options struct {
+	scenario string
 	duration time.Duration
 	warmup   time.Duration
 	rate     int
@@ -81,11 +87,13 @@ func main() {
 func parseFlags() options {
 	var o options
 
+	flag.StringVar(&o.scenario, "scenario", scenarioOrders,
+		"orders: round-tripped orders and fills; ioi: a one-way IOI stream from acceptor to initiator")
 	flag.DurationVar(&o.duration, "duration", 30*time.Second, "measurement window")
 	flag.DurationVar(&o.warmup, "warmup", 5*time.Second, "warmup before measuring; excluded from all stats")
-	flag.IntVar(&o.rate, "rate", 5000, "orders per second per session; 0 saturates")
+	flag.IntVar(&o.rate, "rate", 5000, "messages per second per session; 0 saturates")
 	flag.IntVar(&o.sessions, "sessions", 1, "concurrent FIX sessions")
-	flag.StringVar(&o.mix, "mix", "orderflow", "corpus mix: realistic, orderflow, marketdata, flat")
+	flag.StringVar(&o.mix, "mix", "orderflow", "corpus mix: realistic, orderflow, marketdata, flat; ignored by -scenario=ioi")
 	flag.Int64Var(&o.seed, "seed", 20240603, "corpus seed; keep fixed to compare runs")
 	flag.IntVar(&o.inflight, "inflight", 1<<20, "latency ring size; must exceed messages in flight")
 
@@ -107,10 +115,28 @@ func parseFlags() options {
 
 	flag.Parse()
 
+	if o.scenario == scenarioIOI {
+		o.mix = tape.MixIOI.Name
+	}
+
 	return o
 }
 
+const (
+	scenarioOrders = "orders"
+	scenarioIOI    = "ioi"
+)
+
 func run(opts options) error {
+	build := orderFromEntry
+	switch opts.scenario {
+	case scenarioOrders:
+	case scenarioIOI:
+		build = ioiFromEntry
+	default:
+		return fmt.Errorf("unknown scenario %q", opts.scenario)
+	}
+
 	mix, ok := tape.Mixes[opts.mix]
 	if !ok {
 		return fmt.Errorf("unknown mix %q", opts.mix)
@@ -122,6 +148,11 @@ func run(opts options) error {
 	}
 
 	entries := tape.Gen(opts.seed, 512, mix)
+	if opts.scenario == scenarioIOI {
+		// The mix's heartbeats model a quiet counterparty for the parser
+		// benchmarks; here the engine sends its own, so stream only the IOIs.
+		entries = slices.DeleteFunc(entries, func(e tape.Entry) bool { return e.MsgType != tape.MsgTypeIOI })
+	}
 
 	hist := &histogram{}
 	server := newServerApp()
@@ -157,7 +188,11 @@ func run(opts options) error {
 		wg.Add(1)
 		go func(sessionID gofix.SessionID) {
 			defer wg.Done()
-			pump(client, sessionID, entries, opts.rate, stop)
+			// IOIs flow the other way: the acceptor's end of the session sends.
+			if opts.scenario == scenarioIOI {
+				sessionID = counterparty(sessionID)
+			}
+			pump(client, sessionID, entries, opts.rate, build, stop)
 		}(sessionID)
 	}
 
@@ -238,8 +273,14 @@ func run(opts options) error {
 	return nil
 }
 
-// pump sends orders on one session at the requested rate until stopped.
-func pump(client *clientApp, sessionID gofix.SessionID, entries []tape.Entry, rate int, stop <-chan struct{}) {
+// pump sends messages on one session at the requested rate until stopped.
+// build stamps seq into each message as its correlation ID (ClOrdID or IOIID),
+// which is how the client finds the send time when the message or its reply
+// arrives.
+func pump(
+	client *clientApp, sessionID gofix.SessionID, entries []tape.Entry, rate int,
+	build func(tape.Entry, uint64) *gofix.Message, stop <-chan struct{},
+) {
 	var interval time.Duration
 	if rate > 0 {
 		interval = time.Second / time.Duration(rate)
@@ -257,7 +298,7 @@ func pump(client *clientApp, sessionID gofix.SessionID, entries []tape.Entry, ra
 
 		seq++
 		entry := entries[int(seq)%len(entries)]
-		msg := orderFromEntry(entry, seq)
+		msg := build(entry, seq)
 
 		// Stamp the send time before handing the message to the engine, so the
 		// measured round trip includes the engine's own outbound work.
@@ -282,6 +323,20 @@ func pump(client *clientApp, sessionID gofix.SessionID, entries []tape.Entry, ra
 			// pacer will burst forever.
 			next = time.Now()
 		}
+	}
+}
+
+// counterparty returns the acceptor's view of an initiator session.
+func counterparty(id gofix.SessionID) gofix.SessionID {
+	return gofix.SessionID{
+		BeginString:      id.BeginString,
+		SenderCompID:     id.TargetCompID,
+		SenderSubID:      id.TargetSubID,
+		SenderLocationID: id.TargetLocationID,
+		TargetCompID:     id.SenderCompID,
+		TargetSubID:      id.SenderSubID,
+		TargetLocationID: id.SenderLocationID,
+		Qualifier:        id.Qualifier,
 	}
 }
 
@@ -310,14 +365,19 @@ func summarise(
 	secs := elapsed.Seconds()
 
 	// Every order produces one ExecutionReport, so the engine handles roughly
-	// twice the client's send count end to end.
+	// twice the client's send count end to end. An IOI is built and parsed once
+	// with no reply, so there each one counts once.
 	engineMessages := sent + received
+	if opts.scenario == scenarioIOI {
+		engineMessages = received
+	}
 	if engineMessages == 0 {
 		engineMessages = 1
 	}
 
 	return results{
 		Config: map[string]string{
+			"scenario":   opts.scenario,
 			"mix":        opts.mix,
 			"rate":       strconv.Itoa(opts.rate),
 			"sessions":   strconv.Itoa(opts.sessions),

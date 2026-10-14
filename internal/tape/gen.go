@@ -83,6 +83,8 @@ func genEntry(rng *rand.Rand, msgType string, i int) Entry {
 		return genMarketDataIncremental(rng, i)
 	case MsgTypeMarketDataSnapshot:
 		return genMarketDataSnapshot(rng, i)
+	case MsgTypeIOI:
+		return genIOI(rng, i)
 	case MsgTypeHeartbeat:
 		return Entry{MsgType: MsgTypeHeartbeat}
 	}
@@ -182,6 +184,58 @@ func genNewOrderSingle(rng *rand.Rand, i int) Entry {
 		},
 		Groups: []Group{genParties(rng, 2+rng.Intn(2))},
 	}
+}
+
+// genIOI is an Indication of Interest as a sell-side broker streams them: mostly
+// new interest, some replaces and cancels referring back to an earlier IOI,
+// usually with a few qualifiers and occasionally targeted at named firms.
+func genIOI(rng *rand.Rand, i int) Entry {
+	symbol := pick(rng, symbols)
+
+	transType := "N"
+	switch roll := rng.Intn(10); {
+	case roll == 0:
+		transType = "C"
+	case roll < 3:
+		transType = "R"
+	}
+
+	ioiQty := pick(rng, []string{"S", "M", "L"})
+	if rng.Intn(2) == 0 {
+		ioiQty = qty(rng)
+	}
+
+	body := []Field{
+		{TagIOIID, "IOI-" + strconv.Itoa(i)},
+		{TagIOITransType, transType},
+	}
+	if transType != "N" {
+		body = append(body, Field{TagIOIRefID, "IOI-" + strconv.Itoa(i-1)})
+	}
+	body = append(body,
+		Field{TagSymbol, symbol},
+		Field{TagSecurityID, "SEC" + symbol},
+		Field{TagSecurityIDSource, "4"},
+		Field{TagSide, pick(rng, []string{"1", "2"})},
+		Field{TagIOIQty, ioiQty},
+		Field{TagCurrency, pick(rng, currencies)},
+		Field{TagPriceType, "2"},
+		Field{TagPrice, price(rng)},
+		Field{TagValidUntilTime, ts(i + 3600)},
+		Field{TagIOIQltyInd, pick(rng, []string{"H", "M", "L"})},
+		Field{TagText, "ioi"},
+		Field{TagTransactTime, ts(i)},
+	)
+
+	var groups []Group
+	if n := rng.Intn(4); n > 0 {
+		groups = append(groups, genIOIQualifiers(rng, n))
+	}
+	if rng.Intn(5) == 0 {
+		groups = append(groups, genRoutingIDs(rng, 1+rng.Intn(2)))
+	}
+
+	return Entry{MsgType: MsgTypeIOI, Body: body, Groups: groups}
 }
 
 func genOrderCancelReplace(rng *rand.Rand, i int) Entry {
@@ -379,6 +433,39 @@ func genSecurityAltIDs(rng *rand.Rand, count int, symbol string) Group {
 		g.Entries[e] = []Field{
 			{TagSecurityAltID, "ALT" + strconv.Itoa(e) + symbol},
 			{TagSecurityAltIDSource, pick(rng, []string{"1", "4", "8"})},
+		}
+	}
+
+	return g
+}
+
+// genIOIQualifiers builds a NoIOIQualifiers group.
+func genIOIQualifiers(rng *rand.Rand, count int) Group {
+	g := Group{
+		CountTag: TagNoIOIQualifiers,
+		Template: []int{TagIOIQualifier},
+		Entries:  make([][]Field, count),
+	}
+
+	for e := range count {
+		g.Entries[e] = []Field{{TagIOIQualifier, pick(rng, []string{"A", "D", "L", "Q", "T", "V", "W"})}}
+	}
+
+	return g
+}
+
+// genRoutingIDs builds a NoRoutingIDs group naming the firms an IOI targets.
+func genRoutingIDs(rng *rand.Rand, count int) Group {
+	g := Group{
+		CountTag: TagNoRoutingIDs,
+		Template: []int{TagRoutingType, TagRoutingID},
+		Entries:  make([][]Field, count),
+	}
+
+	for e := range count {
+		g.Entries[e] = []Field{
+			{TagRoutingType, pick(rng, []string{"1", "3"})},
+			{TagRoutingID, pick(rng, brokers)},
 		}
 	}
 

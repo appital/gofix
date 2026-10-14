@@ -106,12 +106,23 @@ var MixFlat = Mix{
 	Weights: map[string]int{MsgTypeHeartbeat: 100},
 }
 
+// MixIOI is a continuous inbound Indication of Interest stream: almost entirely
+// IOIs, with the odd heartbeat a quiet counterparty would interleave.
+var MixIOI = Mix{
+	Name: "ioi",
+	Weights: map[string]int{
+		MsgTypeIOI:       98,
+		MsgTypeHeartbeat: 2,
+	},
+}
+
 // Mixes indexes the predefined mixes by name, for CLI selection.
 var Mixes = map[string]Mix{
 	MixRealistic.Name:  MixRealistic,
 	MixOrderFlow.Name:  MixOrderFlow,
 	MixMarketData.Name: MixMarketData,
 	MixFlat.Name:       MixFlat,
+	MixIOI.Name:        MixIOI,
 }
 
 // MsgTypes returns the message types in a mix, in a stable order.

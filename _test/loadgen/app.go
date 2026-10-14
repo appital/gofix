@@ -11,6 +11,7 @@ import (
 	"github.com/appital/gofix/gen/enum"
 	"github.com/appital/gofix/gen/field"
 	"github.com/appital/gofix/gen/fix44/executionreport"
+	"github.com/appital/gofix/gen/fix44/ioi"
 	"github.com/appital/gofix/gen/fix44/newordersingle"
 	"github.com/appital/gofix/gen/tag"
 	"github.com/appital/gofix/internal/tape"
@@ -96,12 +97,13 @@ func (a *serverApp) onNewOrderSingle(msg *gofix.Message, sessionID gofix.Session
 	return nil
 }
 
-// clientApp is the initiator side: it paces orders out and times the round trip
-// of each reply.
+// clientApp is the initiator side. In the orders scenario it paces orders out
+// and times the round trip of each reply; in the IOI scenario it is the
+// consumer of the acceptor's IOI stream and times each one's delivery.
 type clientApp struct {
 	hist *histogram
 
-	// sendNanos is a ring indexed by ClOrdID, so matching a reply to its send
+	// sendNanos is a ring indexed by ClOrdID or IOIID, so matching a message to its send
 	// time is an array index rather than a map lookup - no allocation on the
 	// measurement path.
 	sendNanos []int64
@@ -155,13 +157,19 @@ func (a *clientApp) FromApp(msg *gofix.Message, _ gofix.SessionID) gofix.Message
 	}
 	a.received.Add(1)
 
-	clOrdID, err := msg.Body.GetBytes(tag.ClOrdID)
+	var id []byte
+	var err gofix.MessageRejectError
+	if msg.IsMsgTypeOf(tape.MsgTypeIOI) {
+		id, err = a.consumeIOI(msg)
+	} else {
+		id, err = msg.Body.GetBytes(tag.ClOrdID)
+	}
 	if err != nil {
 		a.unmatched.Add(1)
 		return nil
 	}
 
-	seq, convErr := strconv.ParseUint(string(clOrdID), 10, 64)
+	seq, convErr := strconv.ParseUint(string(id), 10, 64)
 	if convErr != nil {
 		a.unmatched.Add(1)
 		return nil
@@ -199,4 +207,78 @@ func orderFromEntry(e tape.Entry, seq uint64) *gofix.Message {
 	}
 
 	return order.ToMessage()
+}
+
+// consumeIOI reads an IOI through the generated getters the way a consumer
+// deciding whether to act on it would, and returns its IOIID.
+func (a *clientApp) consumeIOI(msg *gofix.Message) ([]byte, gofix.MessageRejectError) {
+	interest := ioi.FromMessage(msg)
+
+	if _, err := interest.GetIOITransType(); err != nil {
+		return nil, err
+	}
+	if _, err := interest.GetSymbol(); err != nil {
+		return nil, err
+	}
+	if _, err := interest.GetSide(); err != nil {
+		return nil, err
+	}
+	if _, err := interest.GetIOIQty(); err != nil {
+		return nil, err
+	}
+
+	return msg.Body.GetBytes(tag.IOIID)
+}
+
+// ioiFromEntry builds an IOI using the generated typed setters and groups. The
+// IOIID is the sequence number, so the receiver can match it to its send time.
+func ioiFromEntry(e tape.Entry, seq uint64) *gofix.Message {
+	var transType, side, qty string
+	for _, f := range e.Body {
+		switch f.Tag {
+		case tape.TagIOITransType:
+			transType = f.Value
+		case tape.TagSide:
+			side = f.Value
+		case tape.TagIOIQty:
+			qty = f.Value
+		}
+	}
+
+	interest := ioi.New(
+		field.NewIOIID(strconv.FormatUint(seq, 10)),
+		field.NewIOITransType(enum.IOITransType(transType)),
+		field.NewSide(enum.Side(side)),
+		field.NewIOIQty(enum.IOIQty(qty)),
+	)
+	interest.SetTransactTime(time.Now())
+
+	for _, f := range e.Body {
+		switch f.Tag {
+		case tape.TagIOIID, tape.TagIOITransType, tape.TagSide, tape.TagIOIQty, tape.TagTransactTime:
+			continue
+		}
+		interest.Body.SetString(gofix.Tag(f.Tag), f.Value)
+	}
+
+	for _, g := range e.Groups {
+		switch g.CountTag {
+		case tape.TagNoIOIQualifiers:
+			qualifiers := ioi.NewNoIOIQualifiersRepeatingGroup()
+			for _, entry := range g.Entries {
+				qualifiers.Add().SetIOIQualifier(enum.IOIQualifier(entry[0].Value))
+			}
+			interest.SetNoIOIQualifiers(qualifiers)
+		case tape.TagNoRoutingIDs:
+			routing := ioi.NewNoRoutingIDsRepeatingGroup()
+			for _, entry := range g.Entries {
+				r := routing.Add()
+				r.SetRoutingType(enum.RoutingType(entry[0].Value))
+				r.SetRoutingID(entry[1].Value)
+			}
+			interest.SetNoRoutingIDs(routing)
+		}
+	}
+
+	return interest.ToMessage()
 }

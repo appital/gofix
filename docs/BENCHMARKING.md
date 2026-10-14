@@ -11,7 +11,7 @@ Nothing here changes engine behaviour. It exists to make the engine measurable.
 | ------------------ | ------------------------------------------ | ------------------------------------------------------------ |
 | Message corpus     | `internal/tape/`                           | — (shared fixture)                                           |
 | Micro-benchmarks   | `bench_*_test.go` (root package)           | Individual layers: framing, parse, build, groups, validation |
-| Session benchmarks | `bench_session_test.go`                    | The whole engine, socketless                                 |
+| Session benchmarks | `bench_session_test.go`                    | The whole engine, socketless, plus an inbound IOI stream     |
 | Load generator     | `_test/loadgen/`                           | The whole engine over real loopback TCP                      |
 | Scripts            | `scripts/bench.sh`, `scripts/benchstat.sh` | Repeatable runs and comparison                               |
 
@@ -24,7 +24,15 @@ the same work.
 The default mix (`realistic`) models buy-side order flow: 70% ExecutionReport,
 15% NewOrderSingle, 5% OrderCancelReplaceRequest, 3% OrderCancelRequest, 5%
 MarketDataIncrementalRefresh (10–20 entry repeating group with nested
-NoSecurityAltID), 2% Heartbeat. Other mixes: `orderflow`, `marketdata`, `flat`.
+NoSecurityAltID), 2% Heartbeat. Other mixes: `orderflow`, `marketdata`, `flat`,
+and `ioi`.
+
+`ioi` models a counterparty streaming Indications of Interest at us: 98% IOI, 2%
+Heartbeat. An IOI is mostly new interest, with some replaces and cancels that
+refer back to an earlier IOIID. It usually carries a 1–3 entry NoIOIQualifiers
+group and occasionally a NoRoutingIDs group naming target firms. The per-class
+benchmarks (`msgtype=IOI`) draw from this mix, so the `realistic` tape and its
+`tape` numbers are unaffected.
 
 `internal/tape` deliberately imports nothing outside the standard library. It
 cannot import `gofix` (the benchmarks are internal tests, so that would be an
@@ -32,7 +40,7 @@ import cycle) and it must not import `gen/…` (a gitignored build artifact). It
 FIX encoder is written independently of `Message.build()`, which makes it an
 oracle rather than a mirror.
 
-Four tests guard the corpus, and they run as part of `make test`:
+Four tests guard the `realistic` and `ioi` corpora, and they run as part of `make test`:
 
 - `TestCorpusBuildMatchesWire` — the tape's encoder and `Message.build()` agree byte for byte.
 - `TestCorpusRoundTrip` — parse then rebuild reproduces the original bytes.
@@ -123,18 +131,29 @@ cd _test && go build -o loadgen_bin ./loadgen/
 ./loadgen_bin -rate=5000 -json=- -quiet      # machine-readable results
 ```
 
-Key flags: `-rate` (per session, `0` saturates), `-sessions`, `-duration`,
+Key flags: `-scenario`, `-rate` (per session, `0` saturates), `-sessions`, `-duration`,
 `-warmup` (excluded from all statistics), `-mix`, `-store=memory|file`,
 `-persist`, `-validate`, `-reuse` (`ReuseIncomingMessages`), `-gomaxprocs`, and
 the profile paths.
 
-It reports throughput, round-trip latency percentiles, and — the number this
+There are two scenarios:
+
+- **`-scenario=orders`** (the default): the initiator sends NewOrderSingles and the
+  acceptor answers each one with an ExecutionReport. Latency is the round trip.
+- **`-scenario=ioi`**: the acceptor streams IOIs one way to the initiator,
+  independently on each session, built with the generated `gen/fix44/ioi` types.
+  The initiator reads them through the typed getters. Latency is one way, from
+  just before `SendToTarget` to the receiving `FromApp`. `-mix` is ignored, and
+  `allocs/msg` counts one build plus one parse per IOI. With
+  `make loadtest`, use `LOAD_SCENARIO=ioi`.
+
+It reports throughput, latency percentiles, and — the number this
 whole exercise is about — **allocations per message**, taken from a
 `runtime.MemStats` delta across the measurement window only.
 
-Round-trip latency is measured without allocating: ClOrdIDs are sequential
+Latency is measured without allocating: ClOrdIDs and IOIIDs are sequential
 integers, so send times live in a preallocated ring indexed by sequence number
-and matching a reply is an array index.
+and matching a message is an array index.
 
 ### Reading the load generator's numbers
 
@@ -147,132 +166,254 @@ and matching a reply is an array index.
 - **`unmatched` should be zero.** If it is not, replies arrived that could not be
   matched to a send, and the latency percentiles are incomplete.
 
-## Baseline
+## Before and after (#11 → #24)
 
-Apple M2 (4 performance + 4 efficiency cores), macOS, Go 1.26, `GOMAXPROCS=4`,
-`-count=6 -benchtime=300ms`, median of six runs. Regenerate with
-`make bench-baseline`.
+The performance work in #12–#24, measured end to end. **Before** is `acde97c5`
+(#11, the last commit before any of it) and **after** is `9b31b5f6` (#24).
+
+Apple M2 (4 performance + 4 efficiency cores), macOS 27, Go 1.26.4,
+`GOMAXPROCS=4`, `-count=10 -benchtime=1s`. Times are medians and `Δ time` is
+benchstat's: `~` means no significant difference (p ≥ 0.05). Allocation counts
+are exact.
+
+Both commits ran the same benchmark code: this commit's `bench_*_test.go`,
+`internal/tape` and `_test/loadgen`, copied onto a worktree of `acde97c5`. The
+exceptions are things that did not exist before:
+
+- Everything marked `reuse=on` or `recycled`. `ReuseIncomingMessages` arrived in
+  #19, so these show `—` before.
+- The `FieldMap` benchmarks other than `write`. #22 replaced
+  `length`/`total`/`sortedTags` with `lengthAndTotal`/`sort`, so they are not
+  compared.
+
+To reproduce:
+
+```sh
+git worktree add ../gofix-baseline acde97c5
+cp bench_*_test.go ../gofix-baseline/
+cp -R internal/tape ../gofix-baseline/internal/
+cp -R _test/loadgen ../gofix-baseline/_test/
+# In the worktree, remove the reuse=on cases, the recycled parser variant and
+# -reuse, which do not compile there. Then run the same commands on both sides:
+GOMAXPROCS=4 go test -run '^$' -bench . -benchmem -count=10 -benchtime=1s . > before.txt
+go run golang.org/x/perf/cmd/benchstat@latest before.txt after.txt
+```
+
+### In short
+
+- **Receiving with a data dictionary is 7–18× faster.**
+  `SessionIncoming/receive/dd=on` drops from 60.6 µs and 354 allocations to
+  8.8 µs and 11. Without a dictionary it drops from 5.3 µs and 29 allocations to
+  3.8 µs and 11.
+- **With `ReuseIncomingMessages`, receiving allocates nothing**, with or without
+  a dictionary.
+- **Sending allocates less than half as much.** `SessionOutbound` drops from 288
+  to 123 allocations and is 28% faster. `Build` alone drops from 12 to 3
+  allocations.
+- **Sessions scale.** At 2,000 orders/s each, the baseline collapses from 2
+  sessions upwards (`GOMAXPROCS=4`), delivering under 250/s with round trips of
+  seconds. Now 8 sessions deliver all 16,000/s at a 43 µs median.
+- **Per message on the wire**, the loadgen falls from 217 to 110 allocations
+  per order round trip, and from 199 to 112 per IOI.
+- **A few things got slightly slower:**
+  - `GetField` hits, by 6–8% (1–2 ns)
+  - `ParserReadMessage` without buffer recycling, by 9% (14 ns)
+  - `FIXInt` reads, by 9% (0.3 ns)
+
+  These have not been investigated. They are small against the savings on the
+  same paths.
 
 #### End to end
 
 `RoundTrip` is parse plus build with no session. `SessionIncoming` adds the state machine, sequence checking and the application callback, still without a socket.
 
-| Benchmark                                 |   ns/op |    B/op | allocs/op |
-| ----------------------------------------- | ------: | ------: | --------: |
-| `RoundTrip/dd=off`                        |  5.9 µs |  9.3 KB |        44 |
-| `RoundTrip/dd=on`                         | 51.7 µs | 84.1 KB |       318 |
-| `SessionIncoming/receive/dd=off`          |  5.4 µs |  8.1 KB |        29 |
-| `SessionIncoming/receive/dd=on`           | 59.9 µs | 85.3 KB |       387 |
-| `SessionIncoming/echo/dd=off/persist=off` | 10.9 µs | 12.4 KB |       140 |
-| `SessionIncoming/echo/dd=off/persist=on`  | 11.1 µs | 12.6 KB |       140 |
-| `SessionOutbound/persist=false`           | 12.9 µs | 19.5 KB |       288 |
-| `SessionOutbound/persist=true`            | 12.8 µs | 19.6 KB |       288 |
+| Benchmark                                          | ns/op before |  after |  Δ time | B/op before |   after | allocs before | after |
+| -------------------------------------------------- | -----------: | -----: | ------: | ----------: | ------: | ------------: | ----: |
+| `RoundTrip/dd=off`                                 |       5.9 µs | 4.3 µs | -27.08% |      9.5 KB |  7.7 KB |            45 |    16 |
+| `RoundTrip/dd=on`                                  |      52.9 µs | 4.5 µs | -91.47% |     87.7 KB |  7.8 KB |           286 |    16 |
+| `SessionIncoming/receive/dd=off`                   |       5.3 µs | 3.8 µs | -27.45% |      8.3 KB |  7.2 KB |            29 |    11 |
+| `SessionIncoming/receive/dd=on`                    |      60.6 µs | 8.8 µs | -85.52% |     88.9 KB |  7.2 KB |           354 |    11 |
+| `SessionIncoming/receive/dd=off/reuse=on`          |            — | 2.9 µs |       — |           — |     0 B |             — |     0 |
+| `SessionIncoming/receive/dd=on/reuse=on`           |            — | 7.9 µs |       — |           — |     0 B |             — |     0 |
+| `SessionIncoming/echo/dd=off/persist=off`          |      10.7 µs | 6.9 µs | -35.19% |     12.7 KB | 10.1 KB |           138 |    41 |
+| `SessionIncoming/echo/dd=off/persist=on`           |      10.9 µs | 7.1 µs | -34.61% |     12.8 KB | 10.2 KB |           138 |    41 |
+| `SessionIncoming/echo/dd=off/persist=off/reuse=on` |            — | 5.9 µs |       — |           — |  2.8 KB |             — |    29 |
+| `SessionOutbound/persist=false`                    |      12.9 µs | 9.3 µs | -27.95% |     20.0 KB | 17.4 KB |           288 |   123 |
+| `SessionOutbound/persist=true`                     |      12.9 µs | 9.1 µs | -29.35% |     20.1 KB | 17.6 KB |           288 |   123 |
 
 #### Inbound
 
-`fresh` allocates a `Message` per parse, as a live session does. `reused` parses into one `Message`, which engages the field-arena reuse already present in `doParsing`.
+`fresh` allocates a `Message` per parse, as a session without `ReuseIncomingMessages` does. `reused` parses into one `Message`, as a session with it does.
 
-| Benchmark                          |   ns/op |    B/op | allocs/op |
-| ---------------------------------- | ------: | ------: | --------: |
-| `ParserReadMessage/mix=realistic`  |  161 ns |   557 B |         2 |
-| `ParserReadMessage/mix=marketdata` |  413 ns |  2.8 KB |         2 |
-| `Parse/tape/fresh`                 |  3.6 µs |  8.1 KB |        28 |
-| `Parse/tape/reused`                |  1.7 µs |     0 B |         0 |
-| `ParseWithDD/tape/fresh`           | 50.4 µs | 82.6 KB |       302 |
-| `ParseWithDD/tape/reused`          | 48.2 µs | 74.8 KB |       275 |
-| `ReadAndParse/dd=off`              |  3.6 µs |  8.7 KB |        30 |
-| `ReadAndParse/dd=on`               | 49.5 µs | 83.2 KB |       304 |
-| `ExtractField`                     |  480 ns |     0 B |         0 |
-| `GetField/hit/GetBytes`            |   15 ns |     0 B |         0 |
-| `GetField/hit/GetString`           |   33 ns |    24 B |         2 |
-| `GetField/hit/GetInt`              |   18 ns |     0 B |         0 |
-| `GetField/miss/GetBytes`           |  127 ns |   128 B |         4 |
+| Benchmark                                   | ns/op before |  after |  Δ time | B/op before |  after | allocs before | after |
+| ------------------------------------------- | -----------: | -----: | ------: | ----------: | -----: | ------------: | ----: |
+| `ParserReadMessage/mix=realistic`           |       158 ns | 172 ns |  +9.02% |       557 B |  557 B |             2 |     2 |
+| `ParserReadMessage/mix=realistic/recycled`  |            — |  78 ns |       — |           — |    0 B |             — |     0 |
+| `ParserReadMessage/mix=marketdata`          |       402 ns | 414 ns |       ~ |      2.8 KB | 2.8 KB |             2 |     2 |
+| `ParserReadMessage/mix=marketdata/recycled` |            — | 160 ns |       — |           — |    0 B |             — |     0 |
+| `Parse/tape/fresh`                          |       3.6 µs | 2.6 µs | -27.87% |      8.3 KB | 7.2 KB |            28 |    11 |
+| `Parse/tape/reused`                         |       1.7 µs | 1.7 µs |  -3.10% |         0 B |    0 B |             0 |     0 |
+| `ParseWithDD/tape/fresh`                    |      51.2 µs | 2.8 µs | -94.47% |     86.2 KB | 7.2 KB |           270 |    11 |
+| `ParseWithDD/tape/reused`                   |      49.5 µs | 1.9 µs | -96.24% |     78.0 KB |    0 B |           242 |     0 |
+| `ReadAndParse/dd=off`                       |       3.7 µs | 2.7 µs | -26.08% |      8.9 KB | 7.8 KB |            30 |    13 |
+| `ReadAndParse/dd=on`                        |      50.6 µs | 2.9 µs | -94.18% |     86.8 KB | 7.8 KB |           272 |    13 |
+| `ExtractField`                              |       478 ns | 474 ns |       ~ |         0 B |    0 B |             0 |     0 |
+| `GetField/hit/GetBytes`                     |        16 ns |  17 ns |  +7.42% |         0 B |    0 B |             0 |     0 |
+| `GetField/hit/GetString`                    |        33 ns |  35 ns |  +6.37% |        24 B |   24 B |             2 |     2 |
+| `GetField/hit/GetInt`                       |        18 ns |  19 ns |  +8.19% |         0 B |    0 B |             0 |     0 |
+| `GetField/miss/GetBytes`                    |       128 ns |  21 ns | -83.26% |       128 B |    8 B |             4 |     1 |
 
 #### Inbound, per message class
 
 The last row is the worst case in the corpus: a ~3.3 KB market data message with a 19-entry repeating group, parsed against the FIX 4.4 dictionary.
 
-| Benchmark                                         |    ns/op |    B/op | allocs/op |
-| ------------------------------------------------- | -------: | ------: | --------: |
-| `Parse/msgtype=Heartbeat/fresh`                   |   650 ns |  1.6 KB |        15 |
-| `Parse/msgtype=OrderCancel/fresh`                 |   1.4 µs |  3.4 KB |        24 |
-| `Parse/msgtype=NewOrderSingle/fresh`              |   2.7 µs |  6.1 KB |        27 |
-| `Parse/msgtype=ExecutionReport/fresh`             |   3.2 µs |  8.2 KB |        29 |
-| `Parse/msgtype=MarketDataIncremental/fresh`       |  12.8 µs | 21.2 KB |        27 |
-| `ParseWithDD/msgtype=ExecutionReport/fresh`       |   4.4 µs |  8.7 KB |        60 |
-| `ParseWithDD/msgtype=NewOrderSingle/fresh`        |   6.5 µs | 10.8 KB |       124 |
-| `ParseWithDD/msgtype=MarketDataIncremental/fresh` | 827.4 µs | 1.33 MB |      4272 |
+| Benchmark                                         | ns/op before |   after |  Δ time | B/op before |   after | allocs before | after |
+| ------------------------------------------------- | -----------: | ------: | ------: | ----------: | ------: | ------------: | ----: |
+| `Parse/msgtype=Heartbeat/fresh`                   |       664 ns |  595 ns | -10.36% |      1.6 KB |  1.7 KB |            15 |     8 |
+| `Parse/msgtype=OrderCancel/fresh`                 |       1.4 µs |  1.2 µs | -18.76% |      3.4 KB |  3.2 KB |            24 |    12 |
+| `Parse/msgtype=IOI/fresh`                         |       2.0 µs |  1.5 µs | -23.11% |      4.9 KB |  4.2 KB |            26 |    12 |
+| `Parse/msgtype=NewOrderSingle/fresh`              |       2.8 µs |  2.1 µs | -23.35% |      6.2 KB |  6.3 KB |            27 |    11 |
+| `Parse/msgtype=ExecutionReport/fresh`             |       3.2 µs |  2.1 µs | -34.55% |      8.4 KB |  6.6 KB |            29 |    12 |
+| `Parse/msgtype=MarketDataIncremental/fresh`       |      12.6 µs | 11.7 µs |  -7.19% |     21.7 KB | 24.6 KB |            27 |    11 |
+| `ParseWithDD/msgtype=IOI/fresh`                   |       2.9 µs |  1.6 µs | -45.91% |      5.5 KB |  4.1 KB |            50 |    11 |
+| `ParseWithDD/msgtype=ExecutionReport/fresh`       |       4.5 µs |  2.2 µs | -50.88% |      8.9 KB |  6.6 KB |            60 |    12 |
+| `ParseWithDD/msgtype=NewOrderSingle/fresh`        |       6.6 µs |  2.3 µs | -64.61% |     11.2 KB |  6.3 KB |           120 |    11 |
+| `ParseWithDD/msgtype=MarketDataIncremental/fresh` |     850.3 µs | 12.6 µs | -98.52% |     1.42 MB | 24.6 KB |          3695 |    11 |
 
 #### Outbound
 
 `Build` serialises an already-populated message; `NewAndBuild` also constructs and populates it.
 
-| Benchmark                           |   ns/op |    B/op | allocs/op |
-| ----------------------------------- | ------: | ------: | --------: |
-| `NewMessage`                        |  143 ns |   440 B |         7 |
-| `TagValue/init`                     |   38 ns |    32 B |         2 |
-| `TagValue/parse`                    |    5 ns |     0 B |         0 |
-| `SetField/SetBytes`                 |   48 ns |    32 B |         2 |
-| `SetField/SetString`                |   60 ns |    56 B |         3 |
-| `SetField/SetInt`                   |   65 ns |    32 B |         3 |
-| `SetField/SetField`                 |   62 ns |    56 B |         3 |
-| `SetField/populate/ExecutionReport` |  4.1 µs |  8.0 KB |       129 |
-| `FormatCheckSum`                    |   48 ns |     3 B |         1 |
-| `FieldMap/length`                   |  302 ns |     0 B |         0 |
-| `FieldMap/total`                    |  357 ns |     0 B |         0 |
-| `FieldMap/sortedTags`               |   86 ns |     0 B |         0 |
-| `FieldMap/write`                    |  463 ns |    48 B |         1 |
-| `Build/tape`                        |  2.4 µs |  1.5 KB |        12 |
-| `NewAndBuild/tape`                  | 12.2 µs | 19.2 KB |       269 |
+| Benchmark                           | ns/op before |  after |  Δ time | B/op before |   after | allocs before | after |
+| ----------------------------------- | -----------: | -----: | ------: | ----------: | ------: | ------------: | ----: |
+| `NewMessage`                        |       147 ns |  57 ns | -61.02% |       440 B |   416 B |             7 |     1 |
+| `TagValue/init`                     |        37 ns |  23 ns | -37.61% |        32 B |    24 B |             2 |     1 |
+| `TagValue/parse`                    |       4.7 ns | 4.7 ns |       ~ |         0 B |     0 B |             0 |     0 |
+| `SetField/SetBytes`                 |        46 ns |  34 ns | -26.90% |        32 B |    24 B |             2 |     1 |
+| `SetField/SetString`                |        59 ns |  34 ns | -42.63% |        56 B |    24 B |             3 |     1 |
+| `SetField/SetInt`                   |        64 ns |  37 ns | -42.24% |        32 B |    16 B |             3 |     1 |
+| `SetField/SetField`                 |        60 ns |  45 ns | -24.70% |        56 B |    48 B |             3 |     2 |
+| `SetField/populate/ExecutionReport` |       4.2 µs | 3.0 µs | -28.29% |      8.1 KB |  7.6 KB |           129 |    48 |
+| `FormatCheckSum`                    |        50 ns | 0.8 ns | -98.33% |         3 B |     0 B |             1 |     0 |
+| `FieldMap/write`                    |       456 ns | 362 ns | -20.42% |        48 B |     0 B |             1 |     0 |
+| `Build/tape`                        |       2.4 µs | 1.6 µs | -33.59% |      1.5 KB |   525 B |            12 |     3 |
+| `NewAndBuild/tape`                  |      12.3 µs | 8.9 µs | -27.99% |     19.7 KB | 17.2 KB |           269 |   113 |
 
 #### Repeating groups
 
 Measured on a 19-entry `NoMDEntries` group with nested `NoSecurityAltID` groups.
 
-| Benchmark              |   ns/op |     B/op | allocs/op |
-| ---------------------- | ------: | -------: | --------: |
-| `RepeatingGroup/Add`   |  675 ns |   1.2 KB |        12 |
-| `RepeatingGroup/Build` | 91.1 µs | 184.3 KB |      2004 |
-| `RepeatingGroup/Write` | 14.4 µs |  63.8 KB |        12 |
-| `RepeatingGroup/Read`  | 37.5 µs |  63.3 KB |       746 |
+| Benchmark              | ns/op before |   after |  Δ time | B/op before |    after | allocs before | after |
+| ---------------------- | -----------: | ------: | ------: | ----------: | -------: | ------------: | ----: |
+| `RepeatingGroup/Add`   |       682 ns |  303 ns | -55.53% |      1.3 KB |    800 B |            12 |     7 |
+| `RepeatingGroup/Build` |      90.5 µs | 62.1 µs | -31.37% |    188.7 KB | 161.5 KB |          2004 |   810 |
+| `RepeatingGroup/Write` |      14.2 µs | 10.0 µs | -29.57% |     65.4 KB |  65.4 KB |            12 |    11 |
+| `RepeatingGroup/Read`  |      37.9 µs | 33.4 µs | -11.85% |     64.9 KB |  62.0 KB |           746 |   340 |
 
 #### Validation and copying
 
-| Benchmark                             |  ns/op |   B/op | allocs/op |
-| ------------------------------------- | -----: | -----: | --------: |
-| `Validate/RejectInvalidMessage=false` | 526 ns |   16 B |         1 |
-| `Validate/RejectInvalidMessage=true`  | 5.4 µs | 2.6 KB |        84 |
-| `CopyInto/tape`                       | 2.7 µs | 6.4 KB |        48 |
+`Validate/RejectInvalidMessage=*` had wide run-to-run spread on the baseline (±64% and ±122%). The allocation counts are exact regardless.
+
+| Benchmark                             | ns/op before |  after |  Δ time | B/op before |  after | allocs before | after |
+| ------------------------------------- | -----------: | -----: | ------: | ----------: | -----: | ------------: | ----: |
+| `Validate/RejectInvalidMessage=false` |       491 ns | 487 ns |       ~ |        16 B |    0 B |             1 |     0 |
+| `Validate/RejectInvalidMessage=true`  |       5.3 µs | 3.2 µs | -39.47% |      2.7 KB |    0 B |            84 |     0 |
+| `CopyInto/tape`                       |       2.7 µs | 1.4 µs | -46.45% |      6.6 KB | 4.8 KB |            48 |    13 |
 
 #### Load generator
 
-Single session, loopback TCP, memory store, persistence on, no data dictionary:
+Loopback TCP, memory store, persistence on, no data dictionary, no
+`ReuseIncomingMessages`, `-gomaxprocs=4`, 20 s measured after a 5 s warmup.
+`allocs/msg` counts both sides of the process: for orders, one inbound parse
+plus one outbound build in each direction per round trip.
 
-| Rate     | Achieved |    p50 |     p99 | allocs/msg | alloc bytes/msg |
-| -------- | -------: | -----: | ------: | ---------: | --------------: |
-| 1,000/s  |  1,000/s | 287 µs | 4.98 ms |          — |               — |
-| 5,000/s  |  5,000/s |  55 µs |  113 µs |       ~211 |          ~14 KB |
-| 12,000/s | 12,000/s |  53 µs |  369 µs |          — |               — |
-| 20,000/s | 20,000/s |  55 µs | 1.41 ms |          — |               — |
+Single session, orders, round-trip latency:
 
-`allocs/msg` counts both directions, so it covers one inbound parse plus one
-outbound build per order.
+| Rate     | p50 before |  after | p99 before |  after | allocs/msg before | after | bytes/msg before |   after |
+| -------- | ---------: | -----: | ---------: | -----: | ----------------: | ----: | ---------------: | ------: |
+| 1,000/s  |     295 µs | 287 µs |     483 µs | 557 µs |               216 |   110 |          14.5 KB | 12.4 KB |
+| 5,000/s  |      55 µs |  51 µs |      78 µs |  80 µs |               217 |   110 |          14.6 KB | 12.5 KB |
+| 12,000/s |      54 µs |  49 µs |     2.6 ms |  84 µs |               217 |   110 |          14.5 KB | 12.5 KB |
+| 20,000/s |      57 µs |  50 µs |    17.3 ms | 106 µs |               217 |   110 |          14.6 KB | 12.5 KB |
 
-Scaling across sessions at 2,000/s each:
+At 12,000/s and above the baseline's p99 grows to milliseconds. After, it stays
+near 100 µs.
 
-| Sessions | Delivered |    p50 | User CPU per wall second |
-| -------- | --------: | -----: | -----------------------: |
-| 1        |   2,000/s | 180 µs |                     ~0.4 |
-| 2        |   4,000/s | 152 µs |                    ~0.45 |
-| 4        |     531/s |  3.9 s |                     ~5.0 |
-| 8        |     112/s |  4.0 s |                        — |
+Saturated (`-rate=0`). Latency here measures queue depth, so only throughput is
+shown. Delivered counts replies for orders and IOIs received for `ioi`:
 
-The collapse at four sessions is finding 8 below.
+| Scenario          | Sent before |     after | Delivered before |     after |
+| ----------------- | ----------: | --------: | ---------------: | --------: |
+| orders, 1 session |    91,050/s | 115,491/s |         27,835/s |  84,791/s |
+| ioi, 1 session    |   114,264/s | 147,054/s |         39,409/s | 147,055/s |
+
+Orders, 2,000/s per session:
+
+| Sessions |  Offered | Delivered before |    after | p50 before |  after | p99 before |  after | allocs/msg before | after |
+| -------: | -------: | ---------------: | -------: | ---------: | -----: | ---------: | -----: | ----------------: | ----: |
+|        1 |  2,000/s |          2,000/s |  2,000/s |     193 µs | 188 µs |     442 µs | 319 µs |               217 |   110 |
+|        2 |  4,000/s |            241/s |  4,000/s |      7.7 s | 152 µs |     22.5 s | 311 µs |                 — |   110 |
+|        4 |  8,000/s |             88/s |  8,000/s |     14.0 s |  76 µs |     23.6 s | 109 µs |                 — |   110 |
+|        8 | 16,000/s |             86/s | 16,000/s |     14.2 s |  43 µs |     24.7 s |  74 µs |                 — |   110 |
+
+`—`: the baseline delivered so little that allocations per delivered message
+mean nothing. At 8 sessions the baseline also failed to shut down and had to be
+killed. Its results were already written.
+
+### Inbound IOI stream
+
+A counterparty streaming Indications of Interest at us is a use case we support
+in production, so it has its own benchmarks. The IOI corpus is described under
+[The corpus](#the-corpus).
+
+Micro-benchmarks:
+
+| Benchmark                                    | ns/op before |  after |  Δ time | B/op before |  after | allocs before | after |
+| -------------------------------------------- | -----------: | -----: | ------: | ----------: | -----: | ------------: | ----: |
+| `SessionIncomingIOI/receive/dd=off`          |       3.1 µs | 2.4 µs | -23.27% |      4.8 KB | 4.1 KB |            26 |    11 |
+| `SessionIncomingIOI/receive/dd=on`           |       8.3 µs | 4.9 µs | -40.78% |      6.8 KB | 4.1 KB |            89 |    11 |
+| `SessionIncomingIOI/receive/dd=off/reuse=on` |            — | 1.7 µs |       — |           — |    0 B |             — |     0 |
+| `SessionIncomingIOI/receive/dd=on/reuse=on`  |            — | 4.3 µs |       — |           — |    0 B |             — |     0 |
+| `Parse/msgtype=IOI/fresh`                    |       2.0 µs | 1.5 µs | -23.11% |      4.9 KB | 4.2 KB |            26 |    12 |
+| `Parse/msgtype=IOI/reused`                   |       849 ns | 832 ns |  -1.97% |         0 B |    0 B |             0 |     0 |
+| `ParseWithDD/msgtype=IOI/fresh`              |       2.9 µs | 1.6 µs | -45.91% |      5.5 KB | 4.1 KB |            50 |    11 |
+| `ParseWithDD/msgtype=IOI/reused`             |       1.7 µs | 914 ns | -47.56% |       723 B |    0 B |            24 |     0 |
+| `CopyInto/msgtype=IOI`                       |       1.8 µs | 1.1 µs | -38.14% |      4.3 KB | 3.4 KB |            36 |    14 |
+| `Build/msgtype=IOI`                          |       1.6 µs | 1.0 µs | -37.45% |       721 B |  267 B |            11 |     3 |
+| `NewAndBuild/msgtype=IOI`                    |       5.6 µs | 4.2 µs | -25.23% |      8.0 KB | 7.2 KB |           141 |    66 |
+
+IOIs are lighter than the realistic tape: about two dozen fields and small
+groups. Even so, receiving with the data dictionary used to cost 2.7× as much
+as receiving without one, and now costs about 2×. With `ReuseIncomingMessages` on, receiving IOIs
+allocates nothing.
+
+The load generator with `-scenario=ioi`, single session, one-way latency:
+
+| Rate     | p50 before | after | p99 before | after | allocs/msg before | after | bytes/msg before |   after |
+| -------- | ---------: | ----: | ---------: | ----: | ----------------: | ----: | ---------------: | ------: |
+| 5,000/s  |      29 µs | 27 µs |      62 µs | 58 µs |               199 |   112 |          14.0 KB | 12.4 KB |
+| 20,000/s |      25 µs | 23 µs |     109 µs | 42 µs |               199 |   112 |          14.1 KB | 12.4 KB |
+
+Saturated, the sender built 147,000 IOIs/s and the receiver kept pace. The
+baseline received 39,000/s of the 114,000/s sent, and queued the rest (see the
+table above).
+
+Independent streams of 2,000 IOIs/s per session:
+
+| Sessions |  Offered | Delivered before |    after | p50 before |  after | p99 before |  after | allocs/msg before | after |
+| -------: | -------: | ---------------: | -------: | ---------: | -----: | ---------: | -----: | ----------------: | ----: |
+|        1 |  2,000/s |          2,000/s |  2,000/s |     131 µs | 123 µs |     303 µs | 201 µs |               199 |   112 |
+|        4 |  8,000/s |            196/s |  8,000/s |     13.2 s |  43 µs |     22.5 s |  66 µs |                 — |   112 |
+|       16 | 32,000/s |            182/s | 32,000/s |     14.5 s |  18 µs |     24.2 s |  42 µs |                 — |   112 |
+
+Sixteen concurrent IOI streams now deliver 32,000/s at an 18 µs median. Before,
+four streams were enough to stall delivery.
 
 ## What the harness found
 
-These are the observations that motivated building it. They are targets for
-optimisation work, not defects fixed here.
+These are the observations that motivated building the harness, recorded as
+they were made against the baseline. Each now ends with what became of it; see
+[Before and after](#before-and-after-11--24) for the measurements.
 
 1. **`FieldMap.add` is the single largest allocation site**, 42% of allocated
    objects in `BenchmarkRoundTrip/dd=off`. Every field costs an insert into
@@ -281,6 +422,10 @@ optimisation work, not defects fixed here.
    even though `doParsing` counts the fields up front in order to size the
    `[]TagValue` arena. A message with 30 fields pays for several map growth
    steps that a single presize would avoid.
+
+   **Now:** #18 presizes field storage from the parsed field count and carves
+   fields from shared chunks. `NewMessage` is one allocation, and
+   `Parse/tape/fresh` drops from 28 to 11.
 
 2. **Inbound `Message`s are allocated per message when they need not be.**
    `BenchmarkParse/tape/fresh` costs ~27 allocations and ~8 KB; `reused` costs
@@ -294,6 +439,9 @@ optimisation work, not defects fixed here.
    `*Message` past the callback today, and every `TagValue.value` aliases the
    message's raw buffer.
 
+   **Now:** #19 adds `ReuseIncomingMessages`, opt-in for the API reason above. With
+   it on, `SessionIncoming/receive` allocates nothing.
+
 3. **A data dictionary makes parsing ~12× more expensive.** `BenchmarkRoundTrip`
    goes from 44 allocations to 319, and `BenchmarkSessionIncoming/receive` from
    28 to 383. `isNumInGroupField` runs per body field and each call builds a
@@ -301,15 +449,24 @@ optimisation work, not defects fixed here.
    `map[int]*FieldDef` for the group's fields. All three are derivable once per
    message type rather than once per field.
 
+   **Now:** #12 resolves the message definition once per message and looks group
+   members up through an index. `ParseWithDD/tape/fresh` drops from 270 allocations
+   to 11, the same as without a dictionary.
+
 4. **`TagValue.init` is the highest-frequency single-field allocation.** It
    grows `tv.bytes` from `nil` through four appends, costing 2 allocations and
    ~38 ns per field, even though the final length is known up front
    (`len(tagDigits) + 1 + len(value) + 1`). The inbound equivalent,
    `TagValue.parse`, sub-slices the raw buffer at ~8 ns and zero allocations.
 
+   **Now:** #16 sizes the field exactly. `TagValue/init` drops to one allocation.
+
 5. **`formatCheckSum` uses `fmt.Sprintf("%03d")`** for a value that is always
    0–255: ~85 ns and an allocation per message, for something a 256-entry table
    or three byte writes would do for free.
+
+   **Now:** #21 computes the digits directly. `FormatCheckSum` takes under a
+   nanosecond and allocates nothing.
 
 6. **`build()` walks each section three times and re-sorts on every call.**
    `length()`, `total()` and `write()` each traverse the section — the first two
@@ -319,9 +476,15 @@ optimisation work, not defects fixed here.
    place. The `bytes.Buffer` in `build()` is not pre-sized despite the body
    length already being known.
 
+   **Now:** #22 makes one length-and-total walk, sorts only after a change, and
+   presizes the buffer. `Build/tape` drops from 12 allocations to 3.
+
 7. **`RepeatingGroup.Add()` rebuilds its tag ordering per element.** Each call
    constructs a `map[Tag]int` from the template and returns a closure over it,
    though the template is immutable for the group's lifetime.
+
+   **Now:** #21 builds the ordering once per group. `RepeatingGroup/Build` drops
+   from 2004 allocations to 810.
 
 8. **Session throughput falls off a cliff between 2 and 4 sessions.** At 2000
    msg/s per session the loadgen uses ~45% of one machine's CPU with 2 sessions
@@ -334,6 +497,13 @@ optimisation work, not defects fixed here.
    `net.Conn.Write` with no `bufio.Writer`, and the scheduler does more work than
    the FIX engine does.
 
+   **Now:** #23 has a session wait for its write loop instead of spinning, buffers
+   `messageOut`, and batches writes through a `bufio.Writer`. At 2,000/s each, 8
+   sessions deliver 16,000/s at a 43 µs median.
+
 9. **Validation with `RejectInvalidMessage` costs 85 allocations per message**
    versus 1 without, because `validateField` constructs a `FIXString`/`FIXInt`/
    `FIXUTCTimestamp`/`FIXFloat` per field into a `FieldValue` interface.
+
+   **Now:** #20 checks formats into concrete locals.
+   `Validate/RejectInvalidMessage=true` allocates nothing.
