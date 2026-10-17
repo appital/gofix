@@ -39,12 +39,15 @@ type MessageRoute func(msg *Message, sessionID SessionID) MessageRejectError
 
 // A MessageRouter is a mutex for MessageRoutes.
 type MessageRouter struct {
-	routes map[routeKey]MessageRoute
+	routes   map[routeKey]MessageRoute
+	registry *Registry
 }
 
-// NewMessageRouter returns an initialized MessageRouter instance.
-func NewMessageRouter() *MessageRouter {
-	return &MessageRouter{routes: make(map[routeKey]MessageRoute)}
+// NewMessageRouter returns an initialized MessageRouter instance. Pass WithRegistry when the
+// router serves sessions registered in a Registry other than the DefaultRegistry.
+func NewMessageRouter(opts ...Option) *MessageRouter {
+	o := newOptions(opts)
+	return &MessageRouter{routes: make(map[routeKey]MessageRoute), registry: o.registry}
 }
 
 // AddRoute adds a route to the MessageRouter instance keyed to begin string and msgType.
@@ -74,8 +77,13 @@ func (c MessageRouter) tryRoute(beginString string, msgType string, msg *Message
 	if beginString == BeginStringFIXT11 && !isAdminMsg {
 		var applVerID FIXString
 		if err := msg.Header.GetField(tagApplVerID, &applVerID); err != nil {
-			session, _ := lookupSession(sessionID)
-			applVerID = FIXString(session.TargetDefaultApplicationVersionID())
+			registry := c.registry
+			if registry == nil {
+				registry = defaultRegistry
+			}
+			if session, ok := registry.lookup(sessionID); ok {
+				applVerID = FIXString(session.TargetDefaultApplicationVersionID())
+			}
 		}
 
 		switch applVerID {

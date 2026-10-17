@@ -26,6 +26,7 @@ import (
 type MessageRouterTestSuite struct {
 	suite.Suite
 	*MessageRouter
+	testRegistry    *Registry
 	msg             *Message
 	sessionID       SessionID
 	returnReject    MessageRejectError
@@ -70,7 +71,7 @@ func (suite *MessageRouterTestSuite) givenTargetDefaultApplVerIDForSession(defau
 		sessionID:              sessionID,
 		targetDefaultApplVerID: defaultApplVerID,
 	}
-	suite.Nil(registerSession(s))
+	suite.Nil(suite.testRegistry.register(s))
 }
 
 func (suite *MessageRouterTestSuite) givenAFIX42NewOrderSingle() {
@@ -98,7 +99,7 @@ func (suite *MessageRouterTestSuite) verifyMessageRoutedBy(beginString, msgType 
 }
 
 func (suite *MessageRouterTestSuite) resetRouter() {
-	suite.MessageRouter = NewMessageRouter()
+	suite.MessageRouter = NewMessageRouter(WithRegistry(suite.testRegistry))
 	suite.routedBy = ""
 	suite.routedSessionID = SessionID{}
 	suite.routedMessage = &Message{}
@@ -106,11 +107,8 @@ func (suite *MessageRouterTestSuite) resetRouter() {
 }
 
 func (suite *MessageRouterTestSuite) SetupTest() {
+	suite.testRegistry = NewRegistry()
 	suite.resetRouter()
-	sessionsLock.Lock()
-	defer sessionsLock.Unlock()
-
-	sessions = make(map[SessionID]*session)
 	suite.msg = NewMessage()
 }
 

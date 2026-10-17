@@ -61,6 +61,16 @@ var applVerIDLookup = map[string]string{
 type sessionFactory struct {
 	// True if building sessions that initiate logon.
 	BuildInitiators bool
+
+	// Registry sessions are registered in. Nil means the DefaultRegistry.
+	registry *Registry
+}
+
+func (f sessionFactory) reg() *Registry {
+	if f.registry == nil {
+		return defaultRegistry
+	}
+	return f.registry
 }
 
 const shortForm = "15:04:05"
@@ -75,7 +85,7 @@ func (f sessionFactory) createSession(
 		return
 	}
 
-	if err = registerSession(session); err != nil {
+	if err = f.reg().register(session); err != nil {
 		return
 	}
 	application.OnCreate(session.sessionID)
