@@ -157,7 +157,7 @@ func (a *Acceptor) Stop() {
 	a.sessionGroup.Wait()
 
 	for sessionID := range a.sessions {
-		err := UnregisterSession(sessionID)
+		err := a.reg().UnregisterSession(sessionID)
 		if err != nil {
 			return
 		}
@@ -174,8 +174,14 @@ func (a *Acceptor) RemoteAddr(sessionID SessionID) (net.Addr, bool) {
 	return val, ok
 }
 
+// Registry returns the Registry the Acceptor's sessions are registered in.
+func (a *Acceptor) Registry() *Registry {
+	return a.reg()
+}
+
 // NewAcceptor creates and initializes a new Acceptor.
-func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Settings, logFactory LogFactory) (a *Acceptor, err error) {
+func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Settings, logFactory LogFactory, opts ...Option) (a *Acceptor, err error) {
+	o := newOptions(opts)
 	a = &Acceptor{
 		app:             app,
 		storeFactory:    storeFactory,
@@ -184,6 +190,7 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		sessions:        make(map[SessionID]*session),
 		sessionHostPort: make(map[SessionID]int),
 		listeners:       make(map[string]net.Listener),
+		sessionFactory:  sessionFactory{registry: o.registry},
 	}
 	if a.settings.GlobalSettings().HasSetting(config.DynamicSessions) {
 		if a.dynamicSessions, err = settings.globalSettings.BoolSetting(config.DynamicSessions); err != nil {
@@ -393,7 +400,7 @@ LOOP:
 			sessions[sessionID] = session
 			go func() {
 				session.run()
-				err := UnregisterSession(session.sessionID)
+				err := a.reg().UnregisterSession(session.sessionID)
 				if err != nil {
 					a.globalLog.OnEventf("Unregister dynamic session %v failed: %v", session.sessionID, err)
 					return

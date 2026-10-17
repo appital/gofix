@@ -88,6 +88,8 @@ in `cmd/generate-fix`. For applications with a custom FIX spec, run `go run
 - The [QuickFIX/Go user manual](https://quickfixengine.org/go/documentation/)
   still covers most configuration and concepts. Where gofix differs, see
   [CHANGELOG.md](CHANGELOG.md) and `config/configuration.go`.
+- [docs/REGISTRY.md](docs/REGISTRY.md) explains session registries and how to
+  run engines whose SessionIDs overlap.
 
 ## Development
 

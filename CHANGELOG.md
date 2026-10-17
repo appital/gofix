@@ -5,6 +5,7 @@
 
 ### FEATURES
 * Adds `ReuseIncomingMessages` session setting: inbound messages are parsed into one reused `Message` and their read buffers are recycled, so receiving a message no longer allocates for either. Off by default; when on, a received `*Message` is valid only until the callback returns
+* Adds a `Registry` type and a `WithRegistry` option for `NewAcceptor`, `NewInitiator` and `NewMessageRouter`. Engines built with their own registry no longer share the package global session map, so one process can run an Acceptor and an Initiator with the same SessionID. Without the option they use the shared `DefaultRegistry()`, as before. `Acceptor.Registry()` and `Initiator.Registry()` return the registry in use. The package level `Send`, `SendToTarget`, `ResetSession` and related functions act only on the default registry; with a custom registry, call the same methods on it instead
 
 ### ENHANCEMENTS
 * Parsing with an application data dictionary no longer allocates per field when detecting repeating groups; adds `FieldDef.ChildField` for indexed group member lookup
