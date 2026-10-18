@@ -249,8 +249,8 @@ func BenchmarkSessionIncomingIOI(b *testing.B) {
 	}
 }
 
-// replayIncoming feeds the corpus through bs.session.Incoming in a loop, b.N
-// messages in all, and reports how many reached the application per message.
+// replayIncoming feeds the corpus through bs.session.Incoming in a b.Loop, one
+// message per iteration, and reports how many reached the application per message.
 func replayIncoming(b *testing.B, bs *benchSession, c *corpus) {
 	b.Helper()
 
@@ -259,9 +259,8 @@ func replayIncoming(b *testing.B, bs *benchSession, c *corpus) {
 
 	b.SetBytes(c.bytesPerMsg())
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		idx := i % len(bufs)
 
 		// The tape is replayed in a loop, so rewind the expected
@@ -295,9 +294,8 @@ func BenchmarkSessionOutbound(b *testing.B) {
 
 			b.SetBytes(c.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for i := 0; b.Loop(); i++ {
 				idx := i % len(c.entries)
 				msg := messageFromEntry(c.entries[idx], idx+1, tape.DefaultSession)
 

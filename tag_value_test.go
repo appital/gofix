@@ -27,7 +27,7 @@ func TestTagValue_init(t *testing.T) {
 	var tv TagValue
 	tv.init(Tag(8), []byte("blahblah"))
 
-	expectedData := []byte("8=blahblah")
+	expectedData := []byte("8=blahblah\x01")
 	if !bytes.Equal(tv.bytes, expectedData) {
 		t.Errorf("Expected %v, got %v", expectedData, tv.bytes)
 	}
@@ -38,7 +38,7 @@ func TestTagValue_init(t *testing.T) {
 }
 
 func TestTagValue_parse(t *testing.T) {
-	stringField := "8=FIX.4.0"
+	stringField := "8=FIX.4.0\x01"
 	tv := TagValue{}
 	err := tv.parse([]byte(stringField))
 	assert.Nil(t, err)
@@ -54,35 +54,35 @@ func TestTagValue_parse(t *testing.T) {
 }
 
 func TestTagValue_parseFail(t *testing.T) {
-	stringField := "not_tag_equal_value"
+	stringField := "not_tag_equal_value\x01"
 	var tv TagValue
 
 	assert.NotNil(t, tv.parse([]byte(stringField)))
 
-	stringField = "tag_not_an_int=uhoh"
+	stringField = "tag_not_an_int=uhoh\x01"
 	assert.NotNil(t, tv.parse([]byte(stringField)))
 
-	stringField = "=notag"
+	stringField = "=notag\x01"
 	assert.NotNil(t, tv.parse([]byte(stringField)))
 }
 
 func TestTagValue_String(t *testing.T) {
-	stringField := "8=FIX.4.0"
+	stringField := "8=FIX.4.0\x01"
 	var tv TagValue
 
 	require.Nil(t, tv.parse([]byte(stringField)))
-	assert.Equal(t, "8=FIX.4.0", tv.String())
+	assert.Equal(t, "8=FIX.4.0\x01", tv.String())
 }
 
 func TestTagValue_length(t *testing.T) {
-	stringField := "8=FIX.4.0"
+	stringField := "8=FIX.4.0\x01"
 	var tv TagValue
 	require.Nil(t, tv.parse([]byte(stringField)))
 	assert.Equal(t, len(stringField), tv.length())
 }
 
 func TestTagValue_total(t *testing.T) {
-	stringField := "1=hello"
+	stringField := "1=hello\x01"
 	var tv TagValue
 	require.Nil(t, tv.parse([]byte(stringField)))
 	assert.Equal(t, 643, tv.total(), "Total is the summation of the ascii byte values of the field string")

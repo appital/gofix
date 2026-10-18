@@ -213,7 +213,7 @@ var (
 )
 
 // corpusDD returns the FIX 4.4 data dictionary, parsed once. Benchmarks that
-// need a dictionary must call this during setup, before ResetTimer - parsing
+// need a dictionary must call this during setup, before b.Loop - parsing
 // the XML takes tens of milliseconds and would swamp any measurement.
 func corpusDD(tb testing.TB) *datadictionary.DataDictionary {
 	tb.Helper()

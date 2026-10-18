@@ -1147,7 +1147,7 @@ func tcTagAppearsMoreThanOnce() validateTest {
 	return validateTest{
 		TestName:             "Tag appears more than once",
 		Validator:            validator,
-		MessageBytes:         []byte("8=FIX.4.09=10735=D34=249=TW52=20060102-15:04:0556=ISLD11=ID21=140=140=254=138=20055=INTC60=20060102-15:04:0510=234"),
+		MessageBytes:         []byte("8=FIX.4.0\x019=107\x0135=D\x0134=2\x0149=TW\x0152=20060102-15:04:05\x0156=ISLD\x0111=ID\x0121=1\x0140=1\x0140=2\x0154=1\x0138=200\x0155=INTC\x0160=20060102-15:04:05\x0110=234\x01"),
 		ExpectedRejectReason: rejectReasonTagAppearsMoreThanOnce,
 		ExpectedRefTagID:     &tag,
 	}
@@ -1162,7 +1162,7 @@ func tcTagAppearsMoreThanOnceFixT() validateTest {
 	return validateTest{
 		TestName:             "Tag appears more than once FIXT",
 		Validator:            validator,
-		MessageBytes:         []byte("8=FIXT.1.19=10735=D34=249=TW52=20060102-15:04:0556=ISLD11=ID21=140=140=254=138=20055=INTC60=20060102-15:04:0510=234"),
+		MessageBytes:         []byte("8=FIXT.1.1\x019=107\x0135=D\x0134=2\x0149=TW\x0152=20060102-15:04:05\x0156=ISLD\x0111=ID\x0121=1\x0140=1\x0140=2\x0154=1\x0138=200\x0155=INTC\x0160=20060102-15:04:05\x0110=234\x01"),
 		ExpectedRejectReason: rejectReasonTagAppearsMoreThanOnce,
 		ExpectedRefTagID:     &tag,
 	}
@@ -1175,7 +1175,7 @@ func tcFloatValidation() validateTest {
 	return validateTest{
 		TestName:             "FloatValidation",
 		Validator:            validator,
-		MessageBytes:         []byte("8=FIX.4.29=10635=D34=249=TW52=20140329-22:38:4556=ISLD11=ID21=140=154=138=+200.0055=INTC60=20140329-22:38:4510=178"),
+		MessageBytes:         []byte("8=FIX.4.2\x019=106\x0135=D\x0134=2\x0149=TW\x0152=20140329-22:38:45\x0156=ISLD\x0111=ID\x0121=1\x0140=1\x0154=1\x0138=+200.00\x0155=INTC\x0160=20140329-22:38:45\x0110=178\x01"),
 		ExpectedRejectReason: rejectReasonIncorrectDataFormatForValue,
 		ExpectedRefTagID:     &tag,
 	}
@@ -1189,7 +1189,7 @@ func tcFloatValidationFixT() validateTest {
 	return validateTest{
 		TestName:             "FloatValidation FIXT",
 		Validator:            validator,
-		MessageBytes:         []byte("8=FIXT.1.19=10635=D34=249=TW52=20140329-22:38:4556=ISLD11=ID21=140=154=138=+200.0055=INTC60=20140329-22:38:4510=178"),
+		MessageBytes:         []byte("8=FIXT.1.1\x019=106\x0135=D\x0134=2\x0149=TW\x0152=20140329-22:38:45\x0156=ISLD\x0111=ID\x0121=1\x0140=1\x0154=1\x0138=+200.00\x0155=INTC\x0160=20140329-22:38:45\x0110=178\x01"),
 		ExpectedRejectReason: rejectReasonIncorrectDataFormatForValue,
 		ExpectedRefTagID:     &tag,
 	}
@@ -1201,7 +1201,7 @@ func tcMultipleRepeatingGroupFields() validateTest {
 	return validateTest{
 		TestName:          "Multiple repeating group fields in a message",
 		Validator:         validator,
-		MessageBytes:      []byte("8=FIX.4.39=17635=D34=249=TW52=20140329-22:38:4556=ISLD11=ID453=2448=PARTYID452=3523=SUBID448=PARTYID2452=378=179=ACCOUNT80=121=140=154=138=20055=INTC60=20140329-22:38:4510=178"),
+		MessageBytes:      []byte("8=FIX.4.3\x019=176\x0135=D\x0134=2\x0149=TW\x0152=20140329-22:38:45\x0156=ISLD\x0111=ID\x01453=2\x01448=PARTYID\x01452=3\x01523=SUBID\x01448=PARTYID2\x01452=3\x0178=1\x0179=ACCOUNT\x0180=1\x0121=1\x0140=1\x0154=1\x0138=200\x0155=INTC\x0160=20140329-22:38:45\x0110=178\x01"),
 		DoNotExpectReject: true,
 	}
 }
