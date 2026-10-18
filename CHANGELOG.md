@@ -1,9 +1,12 @@
 ## Unreleased
 
 ### BREAKING CHANGES
+* gofix no longer records Prometheus metrics itself, and no longer depends on the Prometheus client. Importing it used to register the `gofix_*` message and byte counters on the default Prometheus registry; to keep them, pass `gofix.WithMetrics` a factory from the new `github.com/appital/gofix/metrics/prometheus` module, which records the same counters to a registry you choose
 * With `UseTCPProxy=Y`, every connection must now open with a PROXY protocol header; connections without one are closed instead of being accepted with the load balancer's address. A connection that sends nothing for 10 seconds is also closed. This follows from upgrading `github.com/pires/go-proxyproto` to v0.15.0
 
 ### FEATURES
+* Adds `Metrics` and `MetricsFactory` interfaces and a `WithMetrics` option for `NewAcceptor` and `NewInitiator`. Each session's `Metrics` is told of every message its connection sends and receives, with its length, so applications can record connection metrics with whatever system they use. Without the option nothing is recorded
+* Adds the `github.com/appital/gofix/metrics/prometheus` module, a `MetricsFactory` that records message and byte counters with Prometheus
 * Adds `ReuseIncomingMessages` session setting: inbound messages are parsed into one reused `Message` and their read buffers are recycled, so receiving a message no longer allocates for either. Off by default; when on, a received `*Message` is valid only until the callback returns
 * Adds a `Registry` type and a `WithRegistry` option for `NewAcceptor`, `NewInitiator` and `NewMessageRouter`. Engines built with their own registry no longer share the package global session map, so one process can run an Acceptor and an Initiator with the same SessionID. Without the option they use the shared `DefaultRegistry()`, as before. `Acceptor.Registry()` and `Initiator.Registry()` return the registry in use. The package level `Send`, `SendToTarget`, `ResetSession` and related functions act only on the default registry; with a custom registry, call the same methods on it instead
 
@@ -15,7 +18,7 @@
 * Validating a message no longer allocates: `RejectInvalidMessage` checks field formats in place instead of building a `FieldValue` per field, duplicate tags are tracked without a per-message map, and the message type is no longer copied to a string
 * Building a message formats its checksum and body length without allocating, `SetInt` no longer allocates beyond the field itself, and a `RepeatingGroup` builds its template's tag ordering once rather than for every entry, allocates each entry and its lock together, and reads plain template fields without cloning them
 * Building a message walks each section twice instead of three times, sorts a section only when it has changed since the last build, writes under a read lock, no longer copies each section to the heap, and writes into a buffer sized exactly up front
-* The write loop writes every message already waiting before flushing, through a buffered writer, so a backlog goes out in far fewer syscalls; the outbound channel holds up to 64 messages. The read and write loops look up their Prometheus counters once per connection rather than per message
+* The write loop writes every message already waiting before flushing, through a buffered writer, so a backlog goes out in far fewer syscalls; the outbound channel holds up to 64 messages.
 
 ### BUG FIXES
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings

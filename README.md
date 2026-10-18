@@ -31,8 +31,8 @@ gofix does not make those guarantees, so we can:
 - **Scale to many sessions.** We fixed write-loop busy-waiting that saturated
   the CPU once there were more sessions than spare cores.
 - **Add settings we need in production.** These include `MaxMessagesPerSecond`
-  rate limiting, `LogoutTimeout` on acceptor sessions and Prometheus metrics for
-  connections.
+  rate limiting, `LogoutTimeout` on acceptor sessions and a `Metrics` interface
+  for connection metrics, with an optional Prometheus implementation.
 - **Keep generated code alongside the engine.** The FIX 4.0 to 5.0SP2 packages
   are generated into `gen/` from `spec/` under the
   `github.com/appital/gofix/gen` module path. They are not published as separate
@@ -82,6 +82,31 @@ Generated code has the `.generated.go` suffix. To change it, edit the generator
 in `cmd/generate-fix`. For applications with a custom FIX spec, run `go run
 ./cmd/generate-fix --help` to see how to generate code from your own XML.
 
+## Metrics
+
+gofix does not record metrics itself. To count the messages and bytes each
+session sends and receives, implement `gofix.MetricsFactory` and pass it to
+`NewAcceptor` or `NewInitiator` with `gofix.WithMetrics`. See
+[docs/METRICS.md](docs/METRICS.md) for an example.
+
+For Prometheus, use the separate `github.com/appital/gofix/metrics/prometheus`
+module, which keeps the Prometheus client out of the core module:
+
+```go
+import (
+	gofixprom "github.com/appital/gofix/metrics/prometheus"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+metrics, err := gofixprom.NewMetricsFactory(prometheus.DefaultRegisterer)
+...
+acceptor, err := gofix.NewAcceptor(app, storeFactory, settings, logFactory, gofix.WithMetrics(metrics))
+```
+
+It records `gofix_outgoing_message_count`, `gofix_outgoing_message_bytes`,
+`gofix_incoming_message_count` and `gofix_incoming_message_bytes`, labelled by
+`sessionID`.
+
 ## Documentation
 
 - [Go API documentation](https://godoc.org/github.com/appital/gofix)
@@ -90,6 +115,8 @@ in `cmd/generate-fix`. For applications with a custom FIX spec, run `go run
   [CHANGELOG.md](CHANGELOG.md) and `config/configuration.go`.
 - [docs/REGISTRY.md](docs/REGISTRY.md) explains session registries and how to
   run engines whose SessionIDs overlap.
+- [docs/METRICS.md](docs/METRICS.md) explains the `Metrics` interface, with an
+  example that implements a Prometheus counter.
 
 ## Development
 

@@ -190,7 +190,7 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		sessions:        make(map[SessionID]*session),
 		sessionHostPort: make(map[SessionID]int),
 		listeners:       make(map[string]net.Listener),
-		sessionFactory:  sessionFactory{registry: o.registry},
+		sessionFactory:  sessionFactory{registry: o.registry, metricsFactory: o.metricsFactory},
 	}
 	if a.settings.GlobalSettings().HasSetting(config.DynamicSessions) {
 		if a.dynamicSessions, err = settings.globalSettings.BoolSetting(config.DynamicSessions); err != nil {
@@ -374,10 +374,10 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 
 	go func() {
 		msgIn <- fixIn{bytes: msgBytes, receiveTime: parser.lastRead, pooled: true}
-		readLoop(parser, msgIn, a.globalLog, session.sessionID.String())
+		readLoop(parser, msgIn, a.globalLog, session.metrics)
 	}()
 
-	writeLoop(netConn, msgOut, a.globalLog, session.MaxMessagesPerSecond, session.sessionID.String(), session.writerReady)
+	writeLoop(netConn, msgOut, a.globalLog, session.MaxMessagesPerSecond, session.metrics, session.writerReady)
 }
 
 func (a *Acceptor) dynamicSessionsLoop() {

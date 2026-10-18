@@ -4,7 +4,8 @@ package gofix
 type Option func(*options)
 
 type options struct {
-	registry *Registry
+	registry       *Registry
+	metricsFactory MetricsFactory
 }
 
 // WithRegistry sets the Registry that sessions are registered in and looked up from.
@@ -15,6 +16,15 @@ func WithRegistry(r *Registry) Option {
 	}
 }
 
+// WithMetrics sets the MetricsFactory that creates the Metrics each session
+// records connection activity to. Without it nothing is recorded. It has no
+// effect on a MessageRouter.
+func WithMetrics(f MetricsFactory) Option {
+	return func(o *options) {
+		o.metricsFactory = f
+	}
+}
+
 func newOptions(opts []Option) options {
 	var o options
 	for _, opt := range opts {
@@ -22,6 +32,9 @@ func newOptions(opts []Option) options {
 	}
 	if o.registry == nil {
 		o.registry = defaultRegistry
+	}
+	if o.metricsFactory == nil {
+		o.metricsFactory = nullMetricsFactory{}
 	}
 	return o
 }

@@ -20,38 +20,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/time/rate"
 )
 
 const maxBurst = 1
-
-var (
-	outgoingMessageCount = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "gofix",
-		Name:      "outgoing_message_count",
-		Help:      "Count of messages sent inside gofix writeLoop",
-	}, []string{"sessionID"})
-
-	outgoingMessageBytes = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "gofix",
-		Name:      "outgoing_message_bytes",
-		Help:      "Count of bytes sent inside gofix writeLoop",
-	}, []string{"sessionID"})
-
-	incomingMessageCount = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "gofix",
-		Name:      "incoming_message_count",
-		Help:      "Count of messages received inside gofix readLoop",
-	}, []string{"sessionID"})
-
-	incomingMessageBytes = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "gofix",
-		Name:      "incoming_message_bytes",
-		Help:      "Count of bytes received inside gofix readLoop",
-	}, []string{"sessionID"})
-)
 
 // messageOutCapacity is the buffer of a connection's outbound channel. A
 // session that finds it full waits for the write loop to take a message. The
@@ -60,12 +32,10 @@ var (
 const messageOutCapacity = 64
 
 // writeLoop writes each message from messageOut to connection, calling ready,
-// if set, as it takes each one. Messages already waiting are written together
-// and flushed once.
-func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, sessionID string, ready func()) {
+// if set, as it takes each one and recording each one to metrics. Messages
+// already waiting are written together and flushed once.
+func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, metrics Metrics, ready func()) {
 	limiter := rate.NewLimiter(rate.Limit(maxMessagesPerSecond), maxBurst)
-	messageCount := outgoingMessageCount.WithLabelValues(sessionID)
-	messageBytes := outgoingMessageBytes.WithLabelValues(sessionID)
 	w := bufio.NewWriter(connection)
 
 	flush := func() {
@@ -94,8 +64,7 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 				}
 			}
 
-			messageCount.Inc()
-			messageBytes.Add(float64(len(msg)))
+			metrics.MessageSent(len(msg))
 
 			if _, err := w.Write(msg); err != nil {
 				log.OnEvent(err.Error())
@@ -118,11 +87,8 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 	}
 }
 
-func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
+func readLoop(parser *parser, msgIn chan fixIn, log Log, metrics Metrics) {
 	defer close(msgIn)
-
-	messageCount := incomingMessageCount.WithLabelValues(sessionID)
-	messageBytes := incomingMessageBytes.WithLabelValues(sessionID)
 
 	for {
 		msg, err := parser.ReadMessage()
@@ -131,8 +97,7 @@ func readLoop(parser *parser, msgIn chan fixIn, log Log, sessionID string) {
 			return
 		}
 
-		messageCount.Inc()
-		messageBytes.Add(float64(msg.Len()))
+		metrics.MessageReceived(msg.Len())
 
 		msgIn <- fixIn{bytes: msg, receiveTime: parser.lastRead, pooled: true}
 	}

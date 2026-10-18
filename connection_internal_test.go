@@ -34,7 +34,7 @@ func TestWriteLoop(t *testing.T) {
 		msgOut <- []byte("test msg 3")
 		close(msgOut)
 	}()
-	writeLoop(writer, msgOut, nullLog{}, 0, "sessionID", nil)
+	writeLoop(writer, msgOut, nullLog{}, 0, nullMetrics{}, nil)
 
 	expected := "test msg 1 test msg 2 test msg 3"
 
@@ -48,7 +48,7 @@ func TestReadLoop(t *testing.T) {
 	stream := "hello8=FIX.4.09=5blah10=103garbage8=FIX.4.09=4foo10=103"
 
 	parser := newParser(strings.NewReader(stream))
-	go readLoop(parser, msgIn, nullLog{}, "sessionID")
+	go readLoop(parser, msgIn, nullLog{}, nullMetrics{})
 
 	var tests = []struct {
 		expectedMsg   string
@@ -130,7 +130,7 @@ func TestWriteLoopRateLimited(t *testing.T) {
 
 	w := &countingWriter{}
 	start := time.Now()
-	writeLoop(w, msgOut, nullLog{}, 20, "sessionID", nil)
+	writeLoop(w, msgOut, nullLog{}, 20, nullMetrics{}, nil)
 
 	assert.Equal(t, "abc", w.buf.String())
 	assert.Equal(t, 3, w.writes, "each paced message should be flushed before the next wait")
@@ -148,7 +148,7 @@ func TestWriteLoopBatches(t *testing.T) {
 
 	w := &countingWriter{}
 	readies := 0
-	writeLoop(w, msgOut, nullLog{}, 0, "sessionID", func() { readies++ })
+	writeLoop(w, msgOut, nullLog{}, 0, nullMetrics{}, func() { readies++ })
 
 	assert.Equal(t, "abc", w.buf.String())
 	assert.Equal(t, 1, w.writes, "waiting messages should go out in one write")
@@ -163,4 +163,44 @@ type countingWriter struct {
 func (w *countingWriter) Write(p []byte) (int, error) {
 	w.writes++
 	return w.buf.Write(p)
+}
+
+// The write loop records every message it writes, and the read loop every
+// message it parses, with their lengths.
+func TestLoopsRecordMetrics(t *testing.T) {
+	msgOut := make(chan []byte, messageOutCapacity)
+	for _, m := range []string{"a", "bb", "ccc"} {
+		msgOut <- []byte(m)
+	}
+	close(msgOut)
+
+	sent := &recordingMetrics{}
+	writeLoop(&countingWriter{}, msgOut, nullLog{}, 0, sent, nil)
+	assert.Equal(t, 3, sent.sentCount)
+	assert.Equal(t, 6, sent.sentBytes)
+
+	msgIn := make(chan fixIn)
+	received := &recordingMetrics{}
+	stream := "8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
+	go readLoop(newParser(strings.NewReader(stream)), msgIn, nullLog{}, received)
+	for range msgIn {
+	}
+	assert.Equal(t, 2, received.receivedCount)
+	assert.Equal(t, len(stream), received.receivedBytes)
+	assert.Zero(t, received.sentCount)
+}
+
+type recordingMetrics struct {
+	sentCount, sentBytes         int
+	receivedCount, receivedBytes int
+}
+
+func (m *recordingMetrics) MessageSent(n int) {
+	m.sentCount++
+	m.sentBytes += n
+}
+
+func (m *recordingMetrics) MessageReceived(n int) {
+	m.receivedCount++
+	m.receivedBytes += n
 }

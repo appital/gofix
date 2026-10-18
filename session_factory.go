@@ -64,6 +64,9 @@ type sessionFactory struct {
 
 	// Registry sessions are registered in. Nil means the DefaultRegistry.
 	registry *Registry
+
+	// Creates the Metrics for each session. Nil means nothing is recorded.
+	metricsFactory MetricsFactory
 }
 
 func (f sessionFactory) reg() *Registry {
@@ -469,6 +472,12 @@ func (f sessionFactory) newSession(
 
 	if s.log, err = logFactory.CreateSessionLog(s.sessionID); err != nil {
 		return
+	}
+
+	if f.metricsFactory != nil {
+		s.metrics = f.metricsFactory.CreateSessionMetrics(s.sessionID)
+	} else {
+		s.metrics = nullMetrics{}
 	}
 
 	if s.store, err = storeFactory.Create(s.sessionID); err != nil {
