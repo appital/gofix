@@ -100,7 +100,7 @@ func NewInitiator(app Application, storeFactory MessageStoreFactory, appSettings
 		sessionSettings: appSettings.SessionSettings(),
 		logFactory:      logFactory,
 		sessions:        make(map[SessionID]*session),
-		sessionFactory:  sessionFactory{BuildInitiators: true, registry: o.registry},
+		sessionFactory:  sessionFactory{BuildInitiators: true, registry: o.registry, metricsFactory: o.metricsFactory},
 	}
 
 	var err error
@@ -216,10 +216,10 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 			goto reconnect
 		}
 
-		go readLoop(newParser(bufio.NewReader(netConn)), msgIn, session.log, session.sessionID.String())
+		go readLoop(newParser(bufio.NewReader(netConn)), msgIn, session.log, session.metrics)
 		disconnected = make(chan any)
 		go func() {
-			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.sessionID.String(), session.writerReady)
+			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.metrics, session.writerReady)
 			if err := netConn.Close(); err != nil {
 				session.log.OnEvent(err.Error())
 			}

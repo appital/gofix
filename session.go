@@ -32,6 +32,7 @@ type session struct {
 	store MessageStore
 
 	log       Log
+	metrics   Metrics
 	sessionID SessionID
 
 	messageOut chan<- []byte

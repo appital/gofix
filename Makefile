@@ -15,9 +15,11 @@ fmt:
 
 vet:
 	go vet `go list ./... | grep -v gofix/gen`
+	cd metrics/prometheus && go vet ./...
 
 test: 
 	MONGODB_TEST_CXN=mongodb://db:27017 go test -v -cover `go list ./... | grep -v gofix/gen`
+	cd metrics/prometheus && go test -v -cover ./...
 
 linters-install:
 	@golangci-lint --version >/dev/null 2>&1 || { \
@@ -152,14 +154,17 @@ accept: $(ACCEPT_SUITE)
 
 build-src:
 	go build -v `go list ./...`
+	cd metrics/prometheus && go build -v ./...
 
 build: build-src build-test-srv
 
 test-ci:
 	go test -v -cover `go list ./... | grep -v gofix/gen`
+	cd metrics/prometheus && go test -v -cover ./...
 
 test-ci-nodb:
 	go test -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(mongo|sql|composite)$$'`
+	cd metrics/prometheus && go test -cover ./...
 
 generate-ci: clean
 	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/appital/gofix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;
