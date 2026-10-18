@@ -21,17 +21,20 @@ test:
 	go test -v -cover `go list ./... | grep -v gofix/gen`
 	cd metrics/prometheus && go test -v -cover ./...
 
+GOLANGCI_LINT_VERSION := v2.12.2
+
 linters-install:
 	@golangci-lint --version >/dev/null 2>&1 || { \
 		echo "installing linting tools..."; \
-		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s v1.64.6; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
 	}
 
 lint: linters-install
 	golangci-lint run
+	cd metrics/prometheus && golangci-lint run
 
 # An easy way to run the linter without going through the install process -
-# docker run -t --rm -v $(pwd):/app -w /app golangci/golangci-lint:v1.64.6 golangci-lint run -v
+# docker run -t --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.12.2 golangci-lint run -v
 # See https://golangci-lint.run/welcome/install/ for more details.
 
 # ---------------------------------------------------------------

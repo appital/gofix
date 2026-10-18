@@ -19,5 +19,15 @@
 // QuickFIX/Go library is a 100% Go open source implementation of the popular
 // C++ QuickFIX engine (http://quickfixengine.org).
 //
+// # Warning
+//
+// gofix is an experimental fork built for Appital's own use. We do not support
+// it for any other use. Its API and behaviour may change without notice, and we
+// do not plan to accept outside feature requests or provide help with
+// integration. For most projects we strongly recommend the upstream
+// [QuickFIX/Go] library instead.
+//
 // User manual and additional information available at https://quickfixgo.org
+//
+// [QuickFIX/GO]: https://github.com/quickfixgo/quickfix
 package gofix

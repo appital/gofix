@@ -27,14 +27,14 @@ import (
 // waiting to be noticed in a benchmark run. The benchmarks remain the place to
 // measure; these only guard.
 
-// assertAllocs fails if fn allocates more than max times per run on average.
-func assertAllocs(t *testing.T, max float64, fn func()) {
+// assertAllocs fails if fn allocates more than maxAllocs times per run on average.
+func assertAllocs(t *testing.T, maxAllocs float64, fn func()) {
 	t.Helper()
 	if testing.CoverMode() != "" {
 		t.Skip("allocation counts are not meaningful with coverage instrumentation")
 	}
-	if got := testing.AllocsPerRun(100, fn); got > max {
-		t.Errorf("got %v allocs per run, want at most %v", got, max)
+	if got := testing.AllocsPerRun(100, fn); got > maxAllocs {
+		t.Errorf("got %v allocs per run, want at most %v", got, maxAllocs)
 	}
 }
 

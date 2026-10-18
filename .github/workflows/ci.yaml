@@ -18,10 +18,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# NOTE: Temporarily stripped down to a single build + unit test job while the
-# library is in flux and CI minutes are limited. The previous linter and
+# NOTE: Temporarily stripped down to lint plus a single build + unit test job
+# while the library is in flux and CI minutes are limited. The previous
 # acceptance test suites can be restored from git history.
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Setup
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+      - name: golangci-lint (metrics/prometheus)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: metrics/prometheus
+
   test:
     name: Build & Unit Tests
     runs-on: ubuntu-latest

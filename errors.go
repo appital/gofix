@@ -21,7 +21,7 @@ import (
 )
 
 // ErrDoNotSend is a convenience error to indicate a DoNotSend in ToApp.
-var ErrDoNotSend = errors.New("Do Not Send")
+var ErrDoNotSend = errors.New("Do Not Send") //nolint:staticcheck // ST1005: exported message kept for compatibility.
 
 // rejectReason enum values.
 const (
