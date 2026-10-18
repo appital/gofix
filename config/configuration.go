@@ -848,10 +848,8 @@ const (
 	// Default: TLS12.
 	//
 	// Valid Values:
-	//  - SSL30
-	//  - TLS10
-	//  - TLS11
 	//  - TLS12
+	//  - TLS13
 	SocketMinimumTLSVersion string = "SocketMinimumTLSVersion"
 
 	// SocketUseSSL if set to Y, an initiator will use TLS even if client certificates are not present.
