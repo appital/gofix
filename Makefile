@@ -18,7 +18,7 @@ vet:
 	cd metrics/prometheus && go vet ./...
 
 test: 
-	MONGODB_TEST_CXN=mongodb://db:27017 go test -v -cover `go list ./... | grep -v gofix/gen`
+	go test -v -cover `go list ./... | grep -v gofix/gen`
 	cd metrics/prometheus && go test -v -cover ./...
 
 linters-install:
@@ -163,7 +163,7 @@ test-ci:
 	cd metrics/prometheus && go test -v -cover ./...
 
 test-ci-nodb:
-	go test -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(mongo|sql|composite)$$'`
+	go test -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(sql|composite)$$'`
 	cd metrics/prometheus && go test -cover ./...
 
 generate-ci: clean

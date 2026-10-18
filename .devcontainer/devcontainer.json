@@ -20,8 +20,7 @@
 				"go.gopath": "/go"
 			},
 			"extensions": [
-				"golang.Go",
-				"mongodb.mongodb-vscode"
+				"golang.Go"
 			]
 		}
 	},

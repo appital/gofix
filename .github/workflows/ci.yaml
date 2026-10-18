@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 # NOTE: Temporarily stripped down to a single build + unit test job while the
-# library is in flux and CI minutes are limited. The previous linter, MongoDB
-# and acceptance test suites can be restored from git history.
+# library is in flux and CI minutes are limited. The previous linter and
+# acceptance test suites can be restored from git history.
 jobs:
   test:
     name: Build & Unit Tests

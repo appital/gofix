@@ -933,52 +933,6 @@ const (
 	// Valid Values:
 	//  - A valid go time.Duration
 	SQLLogConnMaxLifetime string = "SQLLogConnMaxLifetime"
-
-	// MongoLogConnection sets the MongoDB connection URL to use for application logs.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoLogConnection is only relevant if also using mongo.NewLogFactory(..) in code
-	// when creating your LogFactory for your initiator or acceptor.
-	//
-	// Required: Only if using MongoDB as your Log.
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string representing a MongoDB connection
-	MongoLogConnection string = "MongoLogConnection"
-
-	// MongoLogDatabase sets the MongoDB-specific name of the database to use for application logs.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoLogDatabase is only relevant if also using mongo.NewLogFactory(..) in code
-	// when creating your LogFactory for your initiator or acceptor.
-	//
-	// Required: Only if using MongoDB as your Log.
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string corresponding to a MongoDB database
-	MongoLogDatabase string = "MongoLogDatabase"
-
-	// MongoLogReplicaSet sets the MongoDB replica set to use for application logs.
-	// This is optional.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoLogReplicaSet is only relevant if also using mongo.NewLogFactory(..) in code
-	// when creating your LogFactory for your initiator or acceptor.
-	//
-	// Required: No
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string corresponding to a MongoDB replica set
-	MongoLogReplicaSet string = "MongoLogReplicaSet"
 )
 
 const (
@@ -1094,52 +1048,6 @@ const (
 	// Valid Values:
 	//	- A valid string
 	SQLStoreSessionsTableName = "SQLStoreSessionsTableName"
-
-	// MongoStoreConnection sets the MongoDB connection URL to use for message storage.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoStoreConnection is only relevant if also using mongo.NewStoreFactory(..) in code
-	// when creating your MessageStoreFactory for your initiator or acceptor.
-	//
-	// Required: Only if using MongoDB as your MessageStore
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string representing a MongoDB connection
-	MongoStoreConnection string = "MongoStoreConnection"
-
-	// MongoStoreDatabase sets the MongoDB-specific name of the database to use for message storage.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoStoreDatabase is only relevant if also using mongo.NewStoreFactory(..) in code
-	// when creating your MessageStoreFactory for your initiator or acceptor.
-	//
-	// Required: Only if using MongoDB as your MessageStore
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string corresponding to a MongoDB database
-	MongoStoreDatabase string = "MongoStoreDatabase"
-
-	// MongoStoreReplicaSet sets the MongoDB replica set to use for message storage.
-	// This is optional.
-	//
-	// See https://pkg.go.dev/go.mongodb.org/mongo-driver/mongo#Connect for more information.
-	//
-	// MongoStoreReplicaSet is only relevant if also using mongo.NewStoreFactory(..) in code
-	// when creating your MessageStoreFactory for your initiator or acceptor.
-	//
-	// Required: No
-	//
-	// Default: N/A
-	//
-	// Valid Values:
-	//  - A string corresponding to a MongoDB replica set
-	MongoStoreReplicaSet string = "MongoStoreReplicaSet"
 )
 
 const (
