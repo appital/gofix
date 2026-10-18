@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"crypto/tls"
+	"net"
 	"os"
 	"testing"
 
@@ -245,6 +246,92 @@ func (s *TLSTestSuite) TestMinimumTLSVersionRejectsDeprecatedVersions() {
 		_, err := loadTLSConfig(s.settings.GlobalSettings())
 		s.EqualError(err, `"`+version+`" is invalid for SocketMinimumTLSVersion`)
 	}
+}
+
+func (s *TLSTestSuite) TestVerifiedHandshake() {
+	for _, version := range []string{"TLS12", "TLS13"} {
+		s.Run(version, func() {
+			acceptorSettings := NewSessionSettings()
+			acceptorSettings.Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
+			acceptorSettings.Set(config.SocketCertificateFile, s.CertificateFile)
+			acceptorSettings.Set(config.SocketCAFile, s.CAFile)
+			acceptorSettings.Set(config.SocketMinimumTLSVersion, version)
+			acceptorConfig, err := loadTLSConfig(acceptorSettings)
+			s.Require().NoError(err)
+
+			initiatorSettings := NewSessionSettings()
+			initiatorSettings.Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
+			initiatorSettings.Set(config.SocketCertificateFile, s.CertificateFile)
+			initiatorSettings.Set(config.SocketCAFile, s.CAFile)
+			initiatorSettings.Set(config.SocketServerName, "localhost")
+			initiatorSettings.Set(config.SocketMinimumTLSVersion, version)
+			initiatorConfig, err := loadTLSConfig(initiatorSettings)
+			s.Require().NoError(err)
+
+			listener, err := tls.Listen("tcp", "127.0.0.1:0", acceptorConfig)
+			s.Require().NoError(err)
+			defer listener.Close()
+
+			acceptErr := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					acceptErr <- err
+					return
+				}
+				defer conn.Close()
+				acceptErr <- conn.(*tls.Conn).Handshake()
+			}()
+
+			conn, err := tls.Dial("tcp", listener.Addr().String(), initiatorConfig)
+			s.Require().NoError(err)
+			defer conn.Close()
+			s.Require().NoError(<-acceptErr)
+
+			state := conn.ConnectionState()
+			s.GreaterOrEqual(state.Version, acceptorConfig.MinVersion)
+			s.Len(state.VerifiedChains, 1)
+		})
+	}
+}
+
+func (s *TLSTestSuite) TestVerifiedHandshakeRejectsClientWithoutCert() {
+	acceptorSettings := NewSessionSettings()
+	acceptorSettings.Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
+	acceptorSettings.Set(config.SocketCertificateFile, s.CertificateFile)
+	acceptorSettings.Set(config.SocketCAFile, s.CAFile)
+	acceptorConfig, err := loadTLSConfig(acceptorSettings)
+	s.Require().NoError(err)
+
+	initiatorSettings := NewSessionSettings()
+	initiatorSettings.Set(config.SocketUseSSL, "Y")
+	initiatorSettings.Set(config.SocketCAFile, s.CAFile)
+	initiatorSettings.Set(config.SocketServerName, "localhost")
+	initiatorConfig, err := loadTLSConfig(initiatorSettings)
+	s.Require().NoError(err)
+
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", acceptorConfig)
+	s.Require().NoError(err)
+	defer listener.Close()
+
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		defer conn.Close()
+		acceptErr <- conn.(*tls.Conn).Handshake()
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	s.Require().NoError(err)
+	client := tls.Client(conn, initiatorConfig)
+	defer client.Close()
+	_ = client.Handshake()
+
+	s.ErrorContains(<-acceptErr, "client didn't provide a certificate")
 }
 
 func (s *TLSTestSuite) TestLoadTLSBytesMissingKeyOrCert() {
