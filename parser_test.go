@@ -30,14 +30,13 @@ import (
 // See BenchmarkParserReadMessage in bench_parse_test.go for the same measurement
 // over the realistic message corpus.
 func BenchmarkParser_ReadMessage(b *testing.B) {
-	stream := "8=FIXT.1.19=11135=D34=449=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=2348=FIXT.1.19=9535=D34=549=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=198"
+	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01\x01"
 
 	p := newParser(&loopReader{data: []byte(stream)})
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		msg, err := p.ReadMessage()
 		if err != nil {
 			b.Fatal(err)
@@ -74,7 +73,7 @@ func (s *ParserSuite) TestOverflowLength() {
 }
 
 func (s *ParserSuite) TestJumpLength() {
-	stream := "8=FIXT.1.19=11135=D34=449=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=2348=FIXT.1.19=9535=D34=549=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=198"
+	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01"
 
 	s.reader = strings.NewReader(stream)
 	index, err := s.parser.jumpLength()
@@ -85,7 +84,7 @@ func (s *ParserSuite) TestJumpLength() {
 }
 
 func (s *ParserSuite) TestBadLength() {
-	stream := "8=FIXT.1.19=11135=D34=449=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=2348=FIXT.1.19=9535=D34=549=TW52=20140511-23:10:3456=ISLD11=ID21=340=154=155=INTC60=20140511-23:10:3410=198"
+	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01"
 
 	s.reader = strings.NewReader(stream)
 	bytes, _ := s.parser.ReadMessage()
@@ -140,7 +139,7 @@ func (s *ParserSuite) TestReadEOF() {
 }
 
 func (s *ParserSuite) TestReadMessage() {
-	stream := "hello8=FIX.4.09=5blah10=1038=FIX.4.09=4foo10=103"
+	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 	s.reader = strings.NewReader(stream)
 
 	var testCases = []struct {
@@ -148,8 +147,8 @@ func (s *ParserSuite) TestReadMessage() {
 		expectedBufferLen int
 		expectedBufferCap int
 	}{
-		{expectedBytes: "8=FIX.4.09=5blah10=103", expectedBufferCap: defaultBufSize - 31, expectedBufferLen: len(stream) - 31},
-		{expectedBytes: "8=FIX.4.09=4foo10=103", expectedBufferCap: defaultBufSize - 31 - 25, expectedBufferLen: 0},
+		{expectedBytes: "8=FIX.4.0\x019=5\x01blah\x0110=103\x01", expectedBufferCap: defaultBufSize - 31, expectedBufferLen: len(stream) - 31},
+		{expectedBytes: "8=FIX.4.0\x019=4\x01foo\x0110=103\x01", expectedBufferCap: defaultBufSize - 31 - 25, expectedBufferLen: 0},
 	}
 
 	for _, tc := range testCases {
@@ -163,7 +162,7 @@ func (s *ParserSuite) TestReadMessage() {
 }
 
 func (s *ParserSuite) TestReadMessageGrowBuffer() {
-	stream := "hello8=FIX.4.09=5blah10=1038=FIX.4.09=4foo10=103"
+	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 
 	var testCases = []struct {
 		initialBufCap        int
@@ -194,7 +193,7 @@ func (s *ParserSuite) TestReadMessageGrowBuffer() {
 		msg, err := s.parser.ReadMessage()
 
 		s.Nil(err)
-		s.Equal("8=FIX.4.09=5blah10=103", msg.String())
+		s.Equal("8=FIX.4.0\x019=5\x01blah\x0110=103\x01", msg.String())
 		s.Equal(tc.expectedBigBufferLen, len(s.parser.bigBuffer))
 		s.Equal(tc.expectedBufferCap, cap(s.parser.buffer))
 		s.Equal(tc.expectedBufferLen, len(s.parser.buffer))

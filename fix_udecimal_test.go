@@ -26,7 +26,7 @@ import (
 func BenchmarkFIXUDecimalRead(b *testing.B) {
 	var dec FIXUDecimal
 	byt := []byte("-124.3456")
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := dec.Read(byt); err != nil {
 			b.FailNow()
 		}
@@ -35,7 +35,7 @@ func BenchmarkFIXUDecimalRead(b *testing.B) {
 
 func BenchmarkFIXUDecimalWrite(b *testing.B) {
 	dec := FIXUDecimal{Decimal: decimal.MustParse("-124.3456"), Scale: 5}
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if byt := dec.Write(); len(byt) == 0 {
 			b.FailNow()
 		}

@@ -129,7 +129,7 @@ func (p *parser) findEndAfterOffset(offset int) (int, error) {
 }
 
 func (p *parser) jumpLength() (int, error) {
-	lengthIndex, err := p.findIndex([]byte("9="))
+	lengthIndex, err := p.findIndex([]byte("\x019="))
 	if err != nil {
 		return 0, err
 	}

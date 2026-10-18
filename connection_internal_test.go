@@ -45,7 +45,7 @@ func TestWriteLoop(t *testing.T) {
 
 func TestReadLoop(t *testing.T) {
 	msgIn := make(chan fixIn)
-	stream := "hello8=FIX.4.09=5blah10=103garbage8=FIX.4.09=4foo10=103"
+	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x01garbage8=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 
 	parser := newParser(strings.NewReader(stream))
 	go readLoop(parser, msgIn, nullLog{}, nullMetrics{})
@@ -54,8 +54,8 @@ func TestReadLoop(t *testing.T) {
 		expectedMsg   string
 		channelClosed bool
 	}{
-		{expectedMsg: "8=FIX.4.09=5blah10=103"},
-		{expectedMsg: "8=FIX.4.09=4foo10=103"},
+		{expectedMsg: "8=FIX.4.0\x019=5\x01blah\x0110=103\x01"},
+		{expectedMsg: "8=FIX.4.0\x019=4\x01foo\x0110=103\x01"},
 		{channelClosed: true},
 	}
 

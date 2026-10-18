@@ -75,11 +75,11 @@ func (suite *MessageRouterTestSuite) givenTargetDefaultApplVerIDForSession(defau
 }
 
 func (suite *MessageRouterTestSuite) givenAFIX42NewOrderSingle() {
-	suite.givenTheMessage([]byte("8=FIX.4.29=8735=D49=TW34=356=ISLD52=20160421-14:43:5040=160=20160421-14:43:5054=121=311=id10=235"))
+	suite.givenTheMessage([]byte("8=FIX.4.2\x019=87\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160421-14:43:50\x0140=1\x0160=20160421-14:43:50\x0154=1\x0121=3\x0111=id\x0110=235\x01"))
 }
 
 func (suite *MessageRouterTestSuite) givenAFIXTLogonMessage() {
-	suite.givenTheMessage([]byte("8=FIXT.1.19=6335=A34=149=TW52=20160420-21:21:4956=ISLD98=0108=21137=810=105"))
+	suite.givenTheMessage([]byte("8=FIXT.1.1\x019=63\x0135=A\x0134=1\x0149=TW\x0152=20160420-21:21:49\x0156=ISLD\x0198=0\x01108=2\x011137=8\x0110=105\x01"))
 }
 
 func (suite *MessageRouterTestSuite) anticipateReject(rej MessageRejectError) {
@@ -113,7 +113,7 @@ func (suite *MessageRouterTestSuite) SetupTest() {
 }
 
 func (suite *MessageRouterTestSuite) TestNoRoute() {
-	suite.givenTheMessage([]byte("8=FIX.4.39=8735=D49=TW34=356=ISLD52=20160421-14:43:5040=160=20160421-14:43:5054=121=311=id10=235"))
+	suite.givenTheMessage([]byte("8=FIX.4.3\x019=87\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160421-14:43:50\x0140=1\x0160=20160421-14:43:50\x0154=1\x0121=3\x0111=id\x0110=235\x01"))
 
 	rej := suite.Route(suite.msg, suite.sessionID)
 	suite.verifyMessageNotRouted()
@@ -126,7 +126,7 @@ func (suite *MessageRouterTestSuite) TestNoRouteWhitelistedMessageTypes() {
 	for _, test := range tests {
 		suite.SetupTest()
 
-		msg := fmt.Sprintf("8=FIX.4.39=8735=%v49=TW34=356=ISLD52=20160421-14:43:5040=160=20160421-14:43:5054=121=311=id10=235", test)
+		msg := fmt.Sprintf("8=FIX.4.3\x019=87\x0135=%v\x0149=TW\x0134=3\x0156=ISLD\x0152=20160421-14:43:50\x0140=1\x0160=20160421-14:43:50\x0154=1\x0121=3\x0111=id\x0110=235\x01", test)
 		suite.givenTheMessage([]byte(msg))
 
 		rej := suite.Route(suite.msg, suite.sessionID)
@@ -172,7 +172,7 @@ func (suite *MessageRouterTestSuite) TestRouteFIXT50AppWithApplVerID() {
 	suite.givenTheRoute(ApplVerIDFIX50, "D")
 	suite.givenTheRoute(ApplVerIDFIX50SP1, "D")
 
-	suite.givenTheMessage([]byte("8=FIXT.1.19=8935=D49=TW34=356=ISLD52=20160424-16:48:261128=740=160=20160424-16:48:2611=id21=310=120"))
+	suite.givenTheMessage([]byte("8=FIXT.1.1\x019=89\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160424-16:48:26\x011128=7\x0140=1\x0160=20160424-16:48:26\x0111=id\x0121=3\x0110=120\x01"))
 	rej := suite.Route(suite.msg, suite.sessionID)
 	suite.verifyMessageRoutedBy(ApplVerIDFIX50, "D")
 	suite.Nil(rej)
@@ -183,7 +183,7 @@ func (suite *MessageRouterTestSuite) TestRouteFIXTAppWithApplVerID() {
 	suite.givenTheRoute(ApplVerIDFIX50, "D")
 	suite.givenTheRoute(ApplVerIDFIX50SP1, "D")
 
-	suite.givenTheMessage([]byte("8=FIXT.1.19=8935=D49=TW34=356=ISLD52=20160424-16:48:261128=840=160=20160424-16:48:2611=id21=310=120"))
+	suite.givenTheMessage([]byte("8=FIXT.1.1\x019=89\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160424-16:48:26\x011128=8\x0140=1\x0160=20160424-16:48:26\x0111=id\x0121=3\x0110=120\x01"))
 	rej := suite.Route(suite.msg, suite.sessionID)
 	suite.verifyMessageRoutedBy(ApplVerIDFIX50SP1, "D")
 	suite.Nil(rej)
@@ -198,7 +198,7 @@ func (suite *MessageRouterTestSuite) TestRouteFIXTAppWithDefaultApplVerID() {
 		SessionID{BeginString: string(BeginStringFIXT11), SenderCompID: "ISLD", TargetCompID: "TW"},
 	)
 
-	suite.givenTheMessage([]byte("8=FIXT.1.19=8235=D49=TW34=356=ISLD52=20160424-16:48:2640=160=20160424-16:48:2611=id21=310=120"))
+	suite.givenTheMessage([]byte("8=FIXT.1.1\x019=82\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160424-16:48:26\x0140=1\x0160=20160424-16:48:26\x0111=id\x0121=3\x0110=120\x01"))
 	rej := suite.Route(suite.msg, suite.sessionID)
 	suite.verifyMessageRoutedBy(ApplVerIDFIX50SP1, "D")
 	suite.Nil(rej)

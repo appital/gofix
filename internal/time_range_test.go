@@ -95,7 +95,7 @@ func BenchmarkInRange(b *testing.B) {
 	tr, _ := NewUTCTimeRange(start, end, weekdays)
 
 	now := time.Date(2016, time.August, 10, 10, 0, 0, 0, time.UTC)
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		tr.IsInRange(now)
 	}
 }

@@ -47,9 +47,8 @@ func BenchmarkRoundTrip(b *testing.B) {
 
 			b.SetBytes(c.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for i := 0; b.Loop(); i++ {
 				idx := i % len(bufs)
 
 				msg := NewMessage()
@@ -95,9 +94,8 @@ func BenchmarkValidate(b *testing.B) {
 		b.Run("RejectInvalidMessage="+strconv.FormatBool(reject), func(b *testing.B) {
 			b.SetBytes(c.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for i := 0; b.Loop(); i++ {
 				if err := validator.Validate(parsed[i%len(parsed)]); err != nil {
 					b.Fatal(err)
 				}
@@ -119,9 +117,8 @@ func BenchmarkCopyInto(b *testing.B) {
 
 		b.SetBytes(c.bytesPerMsg())
 		b.ReportAllocs()
-		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		for i := 0; b.Loop(); i++ {
 			c.messages[i%len(c.messages)].CopyInto(dst)
 		}
 		sinkMsg = dst

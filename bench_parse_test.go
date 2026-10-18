@@ -57,9 +57,8 @@ func benchParse(b *testing.B, c *corpus, dd *datadictionary.DataDictionary, reus
 
 	b.SetBytes(c.bytesPerMsg())
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		msg := reused
 		if !reuse {
 			msg = NewMessage()
@@ -93,9 +92,8 @@ func BenchmarkParserReadMessage(b *testing.B) {
 
 			b.SetBytes(streamCorpus.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				msg, err := p.ReadMessage()
 				if err != nil {
 					b.Fatal(err)
@@ -111,9 +109,8 @@ func BenchmarkParserReadMessage(b *testing.B) {
 
 			b.SetBytes(streamCorpus.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				msg, err := p.ReadMessage()
 				if err != nil {
 					b.Fatal(err)
@@ -144,9 +141,8 @@ func BenchmarkReadAndParse(b *testing.B) {
 
 			b.SetBytes(c.bytesPerMsg())
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				raw, err := p.ReadMessage()
 				if err != nil {
 					b.Fatal(err)
@@ -173,9 +169,8 @@ func BenchmarkExtractField(b *testing.B) {
 	var tv TagValue
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		rem := body
 		for len(rem) > 0 {
 			var err error
@@ -199,16 +194,14 @@ func BenchmarkGetField(b *testing.B) {
 
 	b.Run("hit/GetBytes", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkBytes, sinkErr = msg.Body.GetBytes(Tag(tape.TagClOrdID))
 		}
 	})
 
 	b.Run("hit/GetString", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			var s string
 			s, sinkErr = msg.Body.GetString(Tag(tape.TagClOrdID))
 			sinkInt = len(s)
@@ -217,16 +210,14 @@ func BenchmarkGetField(b *testing.B) {
 
 	b.Run("hit/GetInt", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkInt, sinkErr = msg.Body.GetInt(Tag(tape.TagOrderQty))
 		}
 	})
 
 	b.Run("miss/GetBytes", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkBytes, sinkErr = msg.Body.GetBytes(Tag(tape.TagQuoteEntryID))
 		}
 	})

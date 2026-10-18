@@ -32,9 +32,8 @@ func BenchmarkBuild(b *testing.B) {
 	forEachMsgType(b, c, func(b *testing.B, c *corpus) {
 		b.SetBytes(c.bytesPerMsg())
 		b.ReportAllocs()
-		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		for i := 0; b.Loop(); i++ {
 			sinkBytes = c.messages[i%len(c.messages)].build()
 		}
 
@@ -50,9 +49,8 @@ func BenchmarkNewAndBuild(b *testing.B) {
 	forEachMsgType(b, c, func(b *testing.B, c *corpus) {
 		b.SetBytes(c.bytesPerMsg())
 		b.ReportAllocs()
-		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		for i := 0; b.Loop(); i++ {
 			idx := i % len(c.entries)
 			sinkBytes = messageFromEntry(c.entries[idx], idx+1, tape.DefaultSession).build()
 		}
@@ -65,9 +63,8 @@ func BenchmarkNewAndBuild(b *testing.B) {
 // three mutexes and three maps, before a single field exists.
 func BenchmarkNewMessage(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkMsg = NewMessage()
 	}
 }
@@ -80,8 +77,7 @@ func BenchmarkSetField(b *testing.B) {
 		m := NewMessage()
 		v := []byte(value)
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			m.Body.SetBytes(Tag(tape.TagClOrdID), v)
 		}
 	})
@@ -89,8 +85,7 @@ func BenchmarkSetField(b *testing.B) {
 	b.Run("SetString", func(b *testing.B) {
 		m := NewMessage()
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			m.Body.SetString(Tag(tape.TagClOrdID), value)
 		}
 	})
@@ -98,8 +93,7 @@ func BenchmarkSetField(b *testing.B) {
 	b.Run("SetInt", func(b *testing.B) {
 		m := NewMessage()
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			m.Body.SetInt(Tag(tape.TagOrderQty), 12345)
 		}
 	})
@@ -107,8 +101,7 @@ func BenchmarkSetField(b *testing.B) {
 	b.Run("SetField", func(b *testing.B) {
 		m := NewMessage()
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			m.Body.SetField(Tag(tape.TagClOrdID), FIXString(value))
 		}
 	})
@@ -120,8 +113,7 @@ func BenchmarkSetField(b *testing.B) {
 		fields := loadCorpus(b, tape.MixRealistic).subset(tape.MsgTypeExecutionReport).entries[0].Body
 
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			m := NewMessage()
 			for _, f := range fields {
 				m.Body.SetString(Tag(f.Tag), f.Value)
@@ -142,8 +134,7 @@ func BenchmarkTagValue(b *testing.B) {
 	b.Run("init", func(b *testing.B) {
 		var tv TagValue
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			tv.init(Tag(tape.TagClOrdID), value)
 		}
 		sinkBytes = tv.bytes
@@ -152,8 +143,7 @@ func BenchmarkTagValue(b *testing.B) {
 	b.Run("parse", func(b *testing.B) {
 		var tv TagValue
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			if err := tv.parse(raw); err != nil {
 				b.Fatal(err)
 			}
@@ -171,8 +161,7 @@ func BenchmarkFieldMap(b *testing.B) {
 
 	b.Run("lengthAndTotal", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkInt, _ = msg.Body.lengthAndTotal(0)
 		}
 	})
@@ -181,8 +170,7 @@ func BenchmarkFieldMap(b *testing.B) {
 	// an unchanged one is not sorted again.
 	b.Run("sort", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			msg.Body.sorted = false
 			sinkInt = len(msg.Body.sortedTags())
 		}
@@ -191,8 +179,7 @@ func BenchmarkFieldMap(b *testing.B) {
 	b.Run("write", func(b *testing.B) {
 		var buf bytes.Buffer
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			buf.Reset()
 			msg.Body.write(&buf)
 		}
@@ -203,9 +190,8 @@ func BenchmarkFieldMap(b *testing.B) {
 // BenchmarkFormatCheckSum isolates the per-message checksum formatting.
 func BenchmarkFormatCheckSum(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		digits := checkSumDigits(i % 256)
 		sinkInt = int(digits[2])
 	}
@@ -221,8 +207,7 @@ func BenchmarkRepeatingGroup(b *testing.B) {
 
 	b.Run("Add", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			rg := NewRepeatingGroup(Tag(tapeGroup.CountTag), template)
 			sinkInt = rg.Add().Len()
 		}
@@ -230,8 +215,7 @@ func BenchmarkRepeatingGroup(b *testing.B) {
 
 	b.Run("Build", func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkTVs = repeatingGroupFromTape(tapeGroup).Write()
 		}
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(len(tapeGroup.Entries)), "ns/entry")
@@ -240,8 +224,7 @@ func BenchmarkRepeatingGroup(b *testing.B) {
 	b.Run("Write", func(b *testing.B) {
 		rg := repeatingGroupFromTape(tapeGroup)
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			sinkTVs = rg.Write()
 		}
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(len(tapeGroup.Entries)), "ns/entry")
@@ -255,8 +238,7 @@ func BenchmarkRepeatingGroup(b *testing.B) {
 		}
 
 		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			rg := NewRepeatingGroup(Tag(tapeGroup.CountTag), template)
 			if err := msg.Body.GetGroup(rg); err != nil {
 				b.Fatal(err)
