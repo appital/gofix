@@ -178,7 +178,7 @@ func (r *TimeRange) IsInSameRange(t1, t2 time.Time) bool {
 		return true
 	}
 
-	if !(r.IsInRange(t1) && r.IsInRange(t2)) {
+	if !r.IsInRange(t1) || !r.IsInRange(t2) {
 		return false
 	}
 

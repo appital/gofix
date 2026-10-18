@@ -142,7 +142,7 @@ func (p *parser) jumpLength() (int, error) {
 	}
 
 	if offset == lengthIndex {
-		return 0, errors.New("No length given")
+		return 0, errors.New("no length given")
 	}
 
 	length, err := atoi(p.buffer[lengthIndex:offset])
@@ -151,7 +151,7 @@ func (p *parser) jumpLength() (int, error) {
 	}
 
 	if length <= 0 {
-		return length, errors.New("Invalid length")
+		return length, errors.New("invalid length")
 	}
 
 	return offset + length, nil

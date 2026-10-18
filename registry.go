@@ -20,8 +20,8 @@ import (
 	"sync"
 )
 
-var errDuplicateSessionID = errors.New("Duplicate SessionID")
-var errUnknownSession = errors.New("Unknown session")
+var errDuplicateSessionID = errors.New("duplicate SessionID")
+var errUnknownSession = errors.New("unknown session")
 
 // Registry is a set of sessions keyed by SessionID. Acceptors and Initiators register their sessions
 // in a Registry, which is the shared DefaultRegistry unless WithRegistry is supplied.
@@ -243,8 +243,4 @@ func GetLog(sessionID SessionID) (Log, error) {
 
 func registerSession(s *session) error {
 	return defaultRegistry.register(s)
-}
-
-func lookupSession(sessionID SessionID) (s *session, ok bool) {
-	return defaultRegistry.lookup(sessionID)
 }

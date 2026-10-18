@@ -576,7 +576,7 @@ func (f sessionFactory) configureSocketConnectAddress(session *session, settings
 			hostConfig = hostConfig + strconv.Itoa(i)
 			portConfig = portConfig + strconv.Itoa(i)
 
-			if !(settings.HasSetting(hostConfig) || settings.HasSetting(portConfig)) {
+			if !settings.HasSetting(hostConfig) && !settings.HasSetting(portConfig) {
 				return
 			}
 		}

@@ -918,7 +918,7 @@ func (s *session) onAdmin(msg any) {
 
 		if s.IsConnected() {
 			if msg.err != nil {
-				msg.err <- errors.New("Already connected")
+				msg.err <- errors.New("already connected")
 				close(msg.err)
 			}
 			return
@@ -927,7 +927,7 @@ func (s *session) onAdmin(msg any) {
 		if !s.IsSessionTime() {
 			s.handleDisconnectState(s)
 			if msg.err != nil {
-				msg.err <- errors.New("Connection outside of session time")
+				msg.err <- errors.New("connection outside of session time")
 				close(msg.err)
 			}
 			return

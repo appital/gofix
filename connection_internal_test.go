@@ -183,7 +183,7 @@ func TestLoopsRecordMetrics(t *testing.T) {
 	received := &recordingMetrics{}
 	stream := "8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 	go readLoop(newParser(strings.NewReader(stream)), msgIn, nullLog{}, received)
-	for range msgIn {
+	for range msgIn { //nolint:revive // drain the channel until readLoop closes it.
 	}
 	assert.Equal(t, 2, received.receivedCount)
 	assert.Equal(t, len(stream), received.receivedBytes)
