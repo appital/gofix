@@ -3,6 +3,8 @@
 ### BREAKING CHANGES
 * gofix no longer records Prometheus metrics itself, and no longer depends on the Prometheus client. Importing it used to register the `gofix_*` message and byte counters on the default Prometheus registry; to keep them, pass `gofix.WithMetrics` a factory from the new `github.com/appital/gofix/metrics/prometheus` module, which records the same counters to a registry you choose
 * With `UseTCPProxy=Y`, every connection must now open with a PROXY protocol header; connections without one are closed instead of being accepted with the load balancer's address. A connection that sends nothing for 10 seconds is also closed. This follows from upgrading `github.com/pires/go-proxyproto` to v0.15.0
+* `SocketMinimumTLSVersion` no longer accepts the deprecated `SSL30`, `TLS10` or `TLS11`; valid values are now `TLS12` (the default) and `TLS13`. Any other value is now an error rather than being silently ignored
+* TLS connections no longer restrict key exchange to the P-256 curve; Go's defaults are used, which prefer X25519 and the post-quantum hybrid X25519MLKEM768. The deprecated `PreferServerCipherSuites` option, which Go ignores, is no longer set
 
 ### FEATURES
 * Adds `Metrics` and `MetricsFactory` interfaces and a `WithMetrics` option for `NewAcceptor` and `NewInitiator`. Each session's `Metrics` is told of every message its connection sends and receives, with its length, so applications can record connection metrics with whatever system they use. Without the option nothing is recorded

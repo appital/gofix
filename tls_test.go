@@ -204,42 +204,47 @@ func (s *TLSTestSuite) TestInsecureSkipVerifyAndCerts() {
 	s.Len(tlsConfig.Certificates, 1)
 }
 
+func (s *TLSTestSuite) TestDefaultTLSConfig() {
+	s.settings.GlobalSettings().Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
+	s.settings.GlobalSettings().Set(config.SocketCertificateFile, s.CertificateFile)
+
+	tlsConfig, err := loadTLSConfig(s.settings.GlobalSettings())
+	s.Nil(err)
+	s.NotNil(tlsConfig)
+	s.Equal(uint16(tls.VersionTLS12), tlsConfig.MinVersion)
+	s.Nil(tlsConfig.CurvePreferences)
+}
+
 func (s *TLSTestSuite) TestMinimumTLSVersion() {
 	s.settings.GlobalSettings().Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
 	s.settings.GlobalSettings().Set(config.SocketCertificateFile, s.CertificateFile)
 
-	// SSL30
-	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "SSL30")
+	// TLS12
+	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "TLS12")
 	tlsConfig, err := loadTLSConfig(s.settings.GlobalSettings())
 
 	s.Nil(err)
 	s.NotNil(tlsConfig)
-	//nolint:staticcheck
-	s.Equal(tlsConfig.MinVersion, uint16(tls.VersionSSL30))
+	s.Equal(uint16(tls.VersionTLS12), tlsConfig.MinVersion)
 
-	// TLS10
-	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "TLS10")
+	// TLS13
+	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "TLS13")
 	tlsConfig, err = loadTLSConfig(s.settings.GlobalSettings())
 
 	s.Nil(err)
 	s.NotNil(tlsConfig)
-	s.Equal(tlsConfig.MinVersion, uint16(tls.VersionTLS10))
+	s.Equal(uint16(tls.VersionTLS13), tlsConfig.MinVersion)
+}
 
-	// TLS11
-	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "TLS11")
-	tlsConfig, err = loadTLSConfig(s.settings.GlobalSettings())
+func (s *TLSTestSuite) TestMinimumTLSVersionRejectsDeprecatedVersions() {
+	s.settings.GlobalSettings().Set(config.SocketPrivateKeyFile, s.PrivateKeyFile)
+	s.settings.GlobalSettings().Set(config.SocketCertificateFile, s.CertificateFile)
 
-	s.Nil(err)
-	s.NotNil(tlsConfig)
-	s.Equal(tlsConfig.MinVersion, uint16(tls.VersionTLS11))
-
-	// TLS12
-	s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, "TLS12")
-	tlsConfig, err = loadTLSConfig(s.settings.GlobalSettings())
-
-	s.Nil(err)
-	s.NotNil(tlsConfig)
-	s.Equal(tlsConfig.MinVersion, uint16(tls.VersionTLS12))
+	for _, version := range []string{"SSL30", "TLS10", "TLS11", "bogus"} {
+		s.settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, version)
+		_, err := loadTLSConfig(s.settings.GlobalSettings())
+		s.EqualError(err, `"`+version+`" is invalid for SocketMinimumTLSVersion`)
+	}
 }
 
 func (s *TLSTestSuite) TestLoadTLSBytesMissingKeyOrCert() {

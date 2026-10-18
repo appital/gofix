@@ -63,7 +63,9 @@ func loadTLSConfig(settings *SessionSettings) (*tls.Config, error) {
 	tlsConfig := defaultTLSConfig()
 	tlsConfig.ServerName = serverName
 	tlsConfig.InsecureSkipVerify = insecureSkipVerify
-	setMinVersionExplicit(settings, tlsConfig)
+	if err = setMinVersionExplicit(settings, tlsConfig); err != nil {
+		return nil, err
+	}
 
 	if settings.HasSetting(config.SocketPrivateKeyFile) || settings.HasSetting(config.SocketCertificateFile) {
 
@@ -148,38 +150,30 @@ func loadTLSConfig(settings *SessionSettings) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// defaultTLSConfig brought to you by https://github.com/gtank/cryptopasta/
 func defaultTLSConfig() *tls.Config {
 	return &tls.Config{
-		// Avoids most of the memorably-named TLS attacks
 		MinVersion: tls.VersionTLS12,
-		// Causes servers to use Go's default ciphersuite preferences,
-		// which are tuned to avoid attacks. Does nothing on clients.
-		PreferServerCipherSuites: true,
-		// Only use curves which have constant-time implementations
-		CurvePreferences: []tls.CurveID{
-			tls.CurveP256,
-		},
 	}
 }
 
-func setMinVersionExplicit(settings *SessionSettings, tlsConfig *tls.Config) {
-	if settings.HasSetting(config.SocketMinimumTLSVersion) {
-		minVersion, err := settings.Setting(config.SocketMinimumTLSVersion)
-		if err != nil {
-			return
-		}
-
-		switch minVersion {
-		case "SSL30":
-			//nolint:staticcheck // SA1019 min version ok
-			tlsConfig.MinVersion = tls.VersionSSL30
-		case "TLS10":
-			tlsConfig.MinVersion = tls.VersionTLS10
-		case "TLS11":
-			tlsConfig.MinVersion = tls.VersionTLS11
-		case "TLS12":
-			tlsConfig.MinVersion = tls.VersionTLS12
-		}
+func setMinVersionExplicit(settings *SessionSettings, tlsConfig *tls.Config) error {
+	if !settings.HasSetting(config.SocketMinimumTLSVersion) {
+		return nil
 	}
+
+	minVersion, err := settings.Setting(config.SocketMinimumTLSVersion)
+	if err != nil {
+		return err
+	}
+
+	switch minVersion {
+	case "TLS12":
+		tlsConfig.MinVersion = tls.VersionTLS12
+	case "TLS13":
+		tlsConfig.MinVersion = tls.VersionTLS13
+	default:
+		return IncorrectFormatForSetting{Setting: config.SocketMinimumTLSVersion, Value: []byte(minVersion)}
+	}
+
+	return nil
 }
