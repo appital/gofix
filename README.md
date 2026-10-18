@@ -50,8 +50,8 @@ Inherited from QuickFIX/Go:
 - FIX versions 4.0 to 5.0SP2
 - Spec-driven run-time message validation
 - Spec-driven code generation of type-safe FIX messages, fields and repeating groups
-- Session state storage: SQL, MongoDB, on-disk or in-memory
-- Logging: file, screen, SQL, MongoDB or composite
+- Session state storage: SQL, on-disk or in-memory
+- Logging: file, screen, SQL or composite
 - Daily and weekly session scheduling
 - TLS support
 - The QuickFIX acceptance test suite

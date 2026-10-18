@@ -17,7 +17,6 @@ package composite
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"strings"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/appital/gofix"
 	"github.com/appital/gofix/log/file"
-	"github.com/appital/gofix/log/mongo"
 	"github.com/appital/gofix/log/screen"
 	"github.com/appital/gofix/log/sql"
 	_ "github.com/mattn/go-sqlite3"
@@ -34,7 +32,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// CompositeLogTestSuite runs tests for the MongoLog impl of Log.
+// CompositeLogTestSuite runs tests for the composite impl of Log.
 type CompositeLogTestSuite struct {
 	suite.Suite
 	sqlLogRootPath string
@@ -43,14 +41,6 @@ type CompositeLogTestSuite struct {
 }
 
 func (suite *CompositeLogTestSuite) SetupTest() {
-	mongoDbCxn := os.Getenv("MONGODB_TEST_CXN")
-	if len(mongoDbCxn) <= 0 {
-		log.Println("MONGODB_TEST_CXN environment arg is not provided, skipping...")
-		suite.T().SkipNow()
-	}
-	mongoDatabase := "automated_testing_database"
-	mongoReplicaSet := "replicaset"
-
 	// create settings
 	sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: "SENDER", TargetCompID: "TARGET"}
 	logPath := path.Join(os.TempDir(), fmt.Sprintf("TestLogStore-%d", os.Getpid()))
@@ -62,9 +52,6 @@ func (suite *CompositeLogTestSuite) SetupTest() {
 
 	settings, err := gofix.ParseSettings(strings.NewReader(fmt.Sprintf(`
 [DEFAULT]
-MongoLogConnection=%s
-MongoLogDatabase=%s
-MongoLogReplicaSet=%s
 FileLogPath=%s
 SQLLogDriver=%s
 SQLLogDataSourceName=%s
@@ -73,7 +60,7 @@ SQLLogConnMaxLifetime=14400s
 [SESSION]
 BeginString=%s
 SenderCompID=%s
-TargetCompID=%s`, mongoDbCxn, mongoDatabase, mongoReplicaSet, logPath, sqlDriver, sqlDsn, sessionID.BeginString, sessionID.SenderCompID, sessionID.TargetCompID)))
+TargetCompID=%s`, logPath, sqlDriver, sqlDsn, sessionID.BeginString, sessionID.SenderCompID, sessionID.TargetCompID)))
 	require.Nil(suite.T(), err)
 
 	suite.sessionID = sessionID
@@ -82,10 +69,10 @@ TargetCompID=%s`, mongoDbCxn, mongoDatabase, mongoReplicaSet, logPath, sqlDriver
 
 func (suite *CompositeLogTestSuite) TestCreateLogNoSession() {
 
-	mngoLogFactory := mongo.NewLogFactory(suite.settings)
+	screenLogFactory := screen.NewLogFactory()
 	sqlLogFactory := sql.NewLogFactory(suite.settings)
 	// create log
-	_, err := NewLogFactory([]gofix.LogFactory{mngoLogFactory, sqlLogFactory}).Create()
+	_, err := NewLogFactory([]gofix.LogFactory{screenLogFactory, sqlLogFactory}).Create()
 	require.Nil(suite.T(), err)
 }
 
