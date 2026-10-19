@@ -1,5 +1,5 @@
 {
-	"name": "Quickfix/Go Development",
+	"name": "gofix Development",
 	"dockerComposeFile": "docker-compose.yml",
 	"service": "app",
 	"workspaceFolder": "/workspace",
