@@ -24,6 +24,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
@@ -42,7 +43,7 @@ type Acceptor struct {
 	listenerShutdown      sync.WaitGroup
 	dynamicSessions       bool
 	dynamicQualifier      bool
-	dynamicQualifierCount int
+	dynamicQualifierCount atomic.Int64
 	dynamicSessionChan    chan *session
 	sessionAddr           sync.Map
 	sessionHostPort       map[SessionID]int
@@ -119,21 +120,16 @@ func (a *Acceptor) Start() (err error) {
 	}
 
 	for _, s := range a.sessions {
-		a.sessionGroup.Add(1)
-		go func(s *session) {
-			s.run()
-			a.sessionGroup.Done()
-		}(s)
+		a.sessionGroup.Go(s.run)
 	}
 	if a.dynamicSessions {
 		a.dynamicSessionChan = make(chan *session)
-		a.sessionGroup.Go(func() {
-			a.dynamicSessionsLoop()
-		})
+		a.sessionGroup.Go(a.dynamicSessionsLoop)
 	}
-	a.listenerShutdown.Add(len(a.listeners))
 	for _, listener := range a.listeners {
-		go a.listenForConnections(listener)
+		a.listenerShutdown.Go(func() {
+			a.listenForConnections(listener)
+		})
 	}
 	return
 }
@@ -225,8 +221,6 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 }
 
 func (a *Acceptor) listenForConnections(listener net.Listener) {
-	defer a.listenerShutdown.Done()
-
 	for {
 		netConn, err := listener.Accept()
 		if err != nil {
@@ -344,8 +338,7 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 	}
 
 	if a.dynamicQualifier {
-		a.dynamicQualifierCount++
-		sessID.Qualifier = strconv.Itoa(a.dynamicQualifierCount)
+		sessID.Qualifier = strconv.FormatInt(a.dynamicQualifierCount.Add(1), 10)
 	}
 	session, ok := a.sessions[sessID]
 	if !ok {
@@ -400,10 +393,8 @@ LOOP:
 			sessions[sessionID] = session
 			go func() {
 				session.run()
-				err := a.reg().UnregisterSession(session.sessionID)
-				if err != nil {
+				if err := a.reg().UnregisterSession(session.sessionID); err != nil {
 					a.globalLog.OnEventf("Unregister dynamic session %v failed: %v", session.sessionID, err)
-					return
 				}
 				complete <- sessionID
 			}()

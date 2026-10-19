@@ -185,15 +185,13 @@ func run(opts options) error {
 
 	var wg sync.WaitGroup
 	for _, sessionID := range sessionIDs {
-		wg.Add(1)
-		go func(sessionID gofix.SessionID) {
-			defer wg.Done()
+		wg.Go(func() {
 			// IOIs flow the other way: the acceptor's end of the session sends.
 			if opts.scenario == scenarioIOI {
 				sessionID = counterparty(sessionID)
 			}
 			pump(client, sessionID, entries, opts.rate, build, stop)
-		}(sessionID)
+		})
 	}
 
 	if opts.warmup > 0 {
