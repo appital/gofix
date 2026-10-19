@@ -22,6 +22,7 @@ import (
 
 var errDuplicateSessionID = errors.New("duplicate SessionID")
 var errUnknownSession = errors.New("unknown session")
+var errSessionStopped = errors.New("session stopped")
 
 // Registry is a set of sessions keyed by SessionID. Acceptors and Initiators register their sessions
 // in a Registry, which is the shared DefaultRegistry unless WithRegistry is supplied.

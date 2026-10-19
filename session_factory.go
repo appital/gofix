@@ -487,6 +487,7 @@ func (f sessionFactory) newSession(
 	s.sessionEvent = make(chan internal.Event)
 	s.messageEvent = make(chan bool, 1)
 	s.admin = make(chan any)
+	s.done = make(chan struct{})
 	s.application = application
 	return
 }

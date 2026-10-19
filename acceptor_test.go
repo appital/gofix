@@ -251,8 +251,10 @@ func TestAcceptor_TCPProxy(t *testing.T) {
 	})
 }
 
-func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
-	const connections = 20
+// startDynamicAcceptor starts an acceptor on port 5001 that accepts dynamic
+// sessions, giving each one its own qualifier.
+func startDynamicAcceptor(t *testing.T) *Acceptor {
+	t.Helper()
 
 	sessionSettings := NewSessionSettings()
 	sessionSettings.Set(config.BeginString, BeginStringFIX42)
@@ -262,6 +264,7 @@ func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 	settings := NewSettings()
 	settings.GlobalSettings().Set(config.SocketAcceptPort, "5001")
 	settings.GlobalSettings().Set(config.HeartBtInt, "30")
+	settings.GlobalSettings().Set(config.LogoutTimeout, "1")
 	settings.GlobalSettings().Set(config.DynamicSessions, "Y")
 	settings.GlobalSettings().Set(config.DynamicQualifier, "Y")
 	_, err := settings.AddSession(sessionSettings)
@@ -270,22 +273,30 @@ func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
 	require.NoError(t, err)
 	require.NoError(t, acceptor.Start())
-	t.Cleanup(acceptor.Stop)
+	return acceptor
+}
 
-	logon := func() []byte {
-		msg := NewMessage()
-		msg.Header.
-			SetField(tagBeginString, FIXString(BeginStringFIX42)).
-			SetField(tagSenderCompID, FIXString("dynamic-client")).
-			SetField(tagTargetCompID, FIXString("dynamic-server")).
-			SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now()}).
-			SetField(tagMsgSeqNum, FIXInt(1)).
-			SetField(tagMsgType, FIXString(msgTypeLogon))
-		msg.Body.
-			SetField(tagEncryptMethod, FIXString("0")).
-			SetField(tagHeartBtInt, FIXInt(30))
-		return msg.build()
-	}
+// dynamicLogon builds a logon for a session the acceptor only knows dynamically.
+func dynamicLogon() []byte {
+	msg := NewMessage()
+	msg.Header.
+		SetField(tagBeginString, FIXString(BeginStringFIX42)).
+		SetField(tagSenderCompID, FIXString("dynamic-client")).
+		SetField(tagTargetCompID, FIXString("dynamic-server")).
+		SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now()}).
+		SetField(tagMsgSeqNum, FIXInt(1)).
+		SetField(tagMsgType, FIXString(msgTypeLogon))
+	msg.Body.
+		SetField(tagEncryptMethod, FIXString("0")).
+		SetField(tagHeartBtInt, FIXInt(30))
+	return msg.build()
+}
+
+func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
+	const connections = 20
+
+	acceptor := startDynamicAcceptor(t)
+	t.Cleanup(acceptor.Stop)
 
 	// Every connection logs on with the same CompIDs at once, so each one relies
 	// on the dynamic qualifier to get its own session.
@@ -297,7 +308,7 @@ func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 				return
 			}
 			t.Cleanup(func() { conn.Close() })
-			_, err = conn.Write(logon())
+			_, err = conn.Write(dynamicLogon())
 			assert.NoError(t, err)
 		})
 	}
@@ -317,4 +328,50 @@ func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 		}
 		return true
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestAcceptor_StopClosesConnections(t *testing.T) {
+	acceptor := startDynamicAcceptor(t)
+
+	// One connection never sends a logon, so it is still waiting for its first
+	// message when the acceptor stops.
+	idle, err := net.Dial("tcp", "127.0.0.1:5001")
+	require.NoError(t, err)
+	defer idle.Close()
+
+	loggedOn, err := net.Dial("tcp", "127.0.0.1:5001")
+	require.NoError(t, err)
+	defer loggedOn.Close()
+	_, err = loggedOn.Write(dynamicLogon())
+	require.NoError(t, err)
+
+	sessionID := SessionID{
+		BeginString:  BeginStringFIX42,
+		SenderCompID: "dynamic-server",
+		TargetCompID: "dynamic-client",
+		Qualifier:    "1",
+	}
+	require.Eventually(t, func() bool {
+		_, ok := acceptor.RemoteAddr(sessionID)
+		return ok
+	}, 2*time.Second, 10*time.Millisecond)
+
+	stopped := make(chan struct{})
+	go func() {
+		acceptor.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+
+	// Stop only returns once every connection has been handled, so both have
+	// been closed by now.
+	for _, conn := range []net.Conn{idle, loggedOn} {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+		_, err := io.Copy(io.Discard, conn)
+		assert.NoError(t, err, "connection should have been closed by the acceptor")
+	}
 }
