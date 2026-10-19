@@ -27,7 +27,9 @@
 // integration. For most projects we strongly recommend the upstream
 // [QuickFIX/Go] library instead.
 //
-// User manual and additional information available at https://quickfixgo.org
+// The QuickFIX/Go user manual at https://quickfixengine.org/go/documentation/
+// still covers most configuration and concepts. Where gofix differs, see
+// CHANGELOG.md and the config package.
 //
 // [QuickFIX/GO]: https://github.com/quickfixgo/quickfix
 package gofix
