@@ -17,9 +17,9 @@ vet:
 	go vet `go list ./... | grep -v gofix/gen`
 	cd metrics/prometheus && go vet ./...
 
-test: 
-	go test -v -cover `go list ./... | grep -v gofix/gen`
-	cd metrics/prometheus && go test -v -cover ./...
+test:
+	go test -v -race -cover `go list ./... | grep -v gofix/gen`
+	cd metrics/prometheus && go test -v -race -cover ./...
 
 GOLANGCI_LINT_VERSION := v2.12.2
 
@@ -146,7 +146,7 @@ fix50sp1:
 fix50sp2:
 	cd _test; ./runat.sh cfg/$(TEST_SET)/$@.cfg 5008 $(STORE) "definitions/$(TEST_SET)/$@/*.def"
 
-ACCEPT_SUITE=fix40 fix41 fix42 fix43 fix44 fix50 fix50sp1 fix50sp2 
+ACCEPT_SUITE=fix40 fix41 fix42 fix43 fix44 fix50 fix50sp1 fix50sp2
 accept: $(ACCEPT_SUITE)
 
 .PHONY: test $(ACCEPT_SUITE)
@@ -162,12 +162,12 @@ build-src:
 build: build-src build-test-srv
 
 test-ci:
-	go test -v -cover `go list ./... | grep -v gofix/gen`
-	cd metrics/prometheus && go test -v -cover ./...
+	go test -v -race -cover `go list ./... | grep -v gofix/gen`
+	cd metrics/prometheus && go test -v -race -cover ./...
 
 test-ci-nodb:
-	go test -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(sql|composite)$$'`
-	cd metrics/prometheus && go test -cover ./...
+	go test -race -cover `go list ./... | grep -v gofix/gen | grep -v -E '/(sql|composite)$$'`
+	cd metrics/prometheus && go test -race -cover ./...
 
 generate-ci: clean
 	mkdir -p gen; cd gen; go run ../cmd/generate-fix/generate-fix.go -pkg-root=github.com/appital/gofix/gen ../spec/$(shell echo $(FIX_TEST) | tr  '[:lower:]' '[:upper:]').xml;

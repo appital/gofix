@@ -64,6 +64,8 @@ type session struct {
 	targetDefaultApplVerID string
 
 	admin chan any
+	// done is closed when run returns, after which admin has no reader.
+	done chan struct{}
 	internal.SessionSettings
 	transportDataDictionary *datadictionary.DataDictionary
 	appDataDictionary       *datadictionary.DataDictionary
@@ -123,10 +125,14 @@ type connect struct {
 
 func (s *session) connect(msgIn <-chan fixIn, msgOut chan<- []byte) error {
 	rep := make(chan error)
-	s.admin <- connect{
+	select {
+	case s.admin <- connect{
 		messageOut: msgOut,
 		messageIn:  msgIn,
 		err:        rep,
+	}:
+	case <-s.done:
+		return errSessionStopped
 	}
 
 	return <-rep
@@ -137,7 +143,10 @@ type stopReq struct{}
 func (s *session) stop() {
 	// Stop once.
 	s.stopOnce.Do(func() {
-		s.admin <- stopReq{}
+		select {
+		case s.admin <- stopReq{}:
+		case <-s.done:
+		}
 	})
 }
 
@@ -987,6 +996,7 @@ func (s *session) run() {
 		s.stateTimer.Stop()
 		s.peerTimer.Stop()
 		ticker.Stop()
+		close(s.done)
 	}()
 
 	for !s.Stopped() {

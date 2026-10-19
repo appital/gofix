@@ -56,11 +56,9 @@ func (i *Initiator) Start() (err error) {
 			return
 		}
 
-		i.wg.Add(1)
-		go func(sessID SessionID) {
-			i.handleConnection(i.sessions[sessID], tlsConfig, dialer)
-			i.wg.Done()
-		}(sessionID)
+		i.wg.Go(func() {
+			i.handleConnection(i.sessions[sessionID], tlsConfig, dialer)
+		})
 	}
 	return
 }

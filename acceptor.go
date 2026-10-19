@@ -18,12 +18,14 @@ package gofix
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
@@ -40,9 +42,12 @@ type Acceptor struct {
 	sessions              map[SessionID]*session
 	sessionGroup          sync.WaitGroup
 	listenerShutdown      sync.WaitGroup
+	connectionGroup       sync.WaitGroup
+	stopCtx               context.Context
+	stopFunc              context.CancelFunc
 	dynamicSessions       bool
 	dynamicQualifier      bool
-	dynamicQualifierCount int
+	dynamicQualifierCount atomic.Int64
 	dynamicSessionChan    chan *session
 	sessionAddr           sync.Map
 	sessionHostPort       map[SessionID]int
@@ -118,42 +123,40 @@ func (a *Acceptor) Start() (err error) {
 		}
 	}
 
+	a.stopCtx, a.stopFunc = context.WithCancel(context.Background())
 	for _, s := range a.sessions {
-		a.sessionGroup.Add(1)
-		go func(s *session) {
-			s.run()
-			a.sessionGroup.Done()
-		}(s)
+		a.sessionGroup.Go(s.run)
 	}
 	if a.dynamicSessions {
 		a.dynamicSessionChan = make(chan *session)
-		a.sessionGroup.Go(func() {
-			a.dynamicSessionsLoop()
-		})
+		a.sessionGroup.Go(a.dynamicSessionsLoop)
 	}
-	a.listenerShutdown.Add(len(a.listeners))
 	for _, listener := range a.listeners {
-		go a.listenForConnections(listener)
+		a.listenerShutdown.Go(func() {
+			a.listenForConnections(listener)
+		})
 	}
 	return
 }
 
 // Stop logs out existing sessions, close their connections, and stop accepting new connections.
 func (a *Acceptor) Stop() {
-	defer func() {
-		_ = recover() // suppress sending on closed channel error
-	}()
-
 	for _, listener := range a.listeners {
 		listener.Close()
 	}
+	// Once the listeners have returned no new connections can be handled.
 	a.listenerShutdown.Wait()
-	if a.dynamicSessions {
-		close(a.dynamicSessionChan)
+
+	// Stopping closes connections still waiting for their first message and
+	// stops the dynamic sessions.
+	if a.stopFunc != nil {
+		a.stopFunc()
 	}
 	for _, session := range a.sessions {
 		session.stop()
 	}
+	// Each connection returns once its session has disconnected.
+	a.connectionGroup.Wait()
 	a.sessionGroup.Wait()
 
 	for sessionID := range a.sessions {
@@ -225,17 +228,15 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 }
 
 func (a *Acceptor) listenForConnections(listener net.Listener) {
-	defer a.listenerShutdown.Done()
-
 	for {
 		netConn, err := listener.Accept()
 		if err != nil {
 			return
 		}
 
-		go func() {
+		a.connectionGroup.Go(func() {
 			a.handleConnection(netConn)
-		}()
+		})
 	}
 }
 
@@ -253,6 +254,13 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 			a.globalLog.OnEvent(err.Error())
 		}
 	}()
+
+	// Until a session takes over the connection nothing else would unblock
+	// reading the first message when the acceptor stops.
+	unwatch := context.AfterFunc(a.stopCtx, func() {
+		netConn.Close()
+	})
+	defer unwatch()
 
 	reader := bufio.NewReader(netConn)
 	parser := newParser(reader)
@@ -344,8 +352,7 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 	}
 
 	if a.dynamicQualifier {
-		a.dynamicQualifierCount++
-		sessID.Qualifier = strconv.Itoa(a.dynamicQualifierCount)
+		sessID.Qualifier = strconv.FormatInt(a.dynamicQualifierCount.Add(1), 10)
 	}
 	session, ok := a.sessions[sessID]
 	if !ok {
@@ -358,7 +365,14 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 			a.globalLog.OnEventf("Dynamic session %v failed to create: %v", sessID, err)
 			return
 		}
-		a.dynamicSessionChan <- dynamicSession
+		select {
+		case a.dynamicSessionChan <- dynamicSession:
+		case <-a.stopCtx.Done():
+			if err := a.reg().UnregisterSession(sessID); err != nil {
+				a.globalLog.OnEventf("Unregister dynamic session %v failed: %v", sessID, err)
+			}
+			return
+		}
 		session = dynamicSession
 		defer session.stop()
 	}
@@ -371,6 +385,9 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 		a.globalLog.OnEventf("Unable to accept session %v connection: %v", sessID, err.Error())
 		return
 	}
+	// The session now closes the connection by disconnecting, which lets it
+	// log out cleanly when the acceptor stops.
+	unwatch()
 
 	go func() {
 		msgIn <- fixIn{bytes: msgBytes, receiveTime: parser.lastRead, pooled: true}
@@ -388,22 +405,19 @@ func (a *Acceptor) dynamicSessionsLoop() {
 LOOP:
 	for {
 		select {
-		case session, ok := <-a.dynamicSessionChan:
-			if !ok {
-				for _, oldSession := range sessions {
-					oldSession.stop()
-				}
-				break LOOP
+		case <-a.stopCtx.Done():
+			for _, oldSession := range sessions {
+				oldSession.stop()
 			}
+			break LOOP
+		case session := <-a.dynamicSessionChan:
 			id++
 			sessionID := id
 			sessions[sessionID] = session
 			go func() {
 				session.run()
-				err := a.reg().UnregisterSession(session.sessionID)
-				if err != nil {
+				if err := a.reg().UnregisterSession(session.sessionID); err != nil {
 					a.globalLog.OnEventf("Unregister dynamic session %v failed: %v", session.sessionID, err)
-					return
 				}
 				complete <- sessionID
 			}()
