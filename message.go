@@ -202,6 +202,16 @@ const (
 
 // doParsing executes the message parsing process.
 func doParsing(mp *msgParser) (err error) {
+	// Inbound messages are parsed on goroutines that nothing recovers, so
+	// malformed input that trips a bug here is returned as a parse error
+	// rather than ending the process. Registered first, this runs after the
+	// unlocks below.
+	defer func() {
+		if r := recover(); r != nil {
+			err = parseError{OrigError: fmt.Sprintf("doParsing: %v", r)}
+		}
+	}()
+
 	mp.msg.Header.rwLock.Lock()
 	defer mp.msg.Header.rwLock.Unlock()
 	mp.msg.Body.rwLock.Lock()

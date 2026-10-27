@@ -18,6 +18,7 @@ package gofix
 import (
 	"bufio"
 	"io"
+	"runtime/debug"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -89,6 +90,14 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 
 func readLoop(parser *parser, msgIn chan fixIn, log Log, metrics Metrics) {
 	defer close(msgIn)
+
+	// Nothing above this goroutine recovers, so a panic here would end the
+	// process. Stop reading instead, which disconnects the session.
+	defer func() {
+		if r := recover(); r != nil {
+			log.OnEventf("Read Loop Terminated with Panic: %v\n%s", r, debug.Stack())
+		}
+	}()
 
 	for {
 		msg, err := parser.ReadMessage()

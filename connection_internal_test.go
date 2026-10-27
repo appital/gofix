@@ -75,6 +75,23 @@ func TestReadLoop(t *testing.T) {
 	}
 }
 
+type panicReader struct{}
+
+func (panicReader) Read([]byte) (int, error) { panic("read failed") }
+
+func TestReadLoopRecoversPanic(t *testing.T) {
+	msgIn := make(chan fixIn)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		readLoop(newParser(panicReader{}), msgIn, nullLog{}, nullMetrics{})
+	}()
+
+	_, ok := <-msgIn
+	assert.False(t, ok, "msgIn should be closed")
+	<-done
+}
+
 // A session that finds messageOut full must not wake itself to retry, which
 // spun it in a busy loop while the write loop was busy; the write loop wakes it
 // once it takes a message.

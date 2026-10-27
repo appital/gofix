@@ -31,6 +31,7 @@
 * Integer fields, and a BodyLength, too large to fit in an `int` are now rejected as invalid instead of wrapping around
 * Reading an empty integer field now returns an error
 * A message whose `XMLDataLen` is longer than the rest of the message is now rejected as invalid
+* An unexpected failure while reading or parsing an inbound message now drops that connection or rejects that message, rather than stopping the process. `ParseMessage` returns an error for messages too short to hold a header
 
 ## 0.9.12 (September 30, 2026)
 
