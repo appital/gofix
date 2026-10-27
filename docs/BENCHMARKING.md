@@ -409,6 +409,49 @@ Independent streams of 2,000 IOIs/s per session:
 Sixteen concurrent IOI streams now deliver 32,000/s at an 18 µs median. Before,
 four streams were enough to stall delivery.
 
+## Splitting `Application`
+
+Splitting `Application` into `Application`, `SessionHandler` and
+`MessageInterceptor` moves `ToApp`, `ToAdmin` and `FromAdmin` from a call
+through `session.application` to a call through `session.interceptor`. Both are
+interface method calls, and the session resolves the optional interfaces once,
+when it is created. It makes no measurable difference.
+
+**Before** is `bfe1b197`, **after** is the split. Both ran the same benchmark
+files on the same machine and settings as above, alternating before and after
+for 10 runs each so drift affects both sides equally.
+
+| Benchmark                                 | ns/op before |  after | Δ time | allocs before | after |
+| ----------------------------------------- | -----------: | -----: | -----: | ------------: | ----: |
+| `RoundTrip/dd=off` (control)              |       4.6 µs | 4.6 µs |      ~ |            16 |    16 |
+| `SessionIncoming/receive/dd=off`          |       4.0 µs | 3.9 µs |      ~ |            11 |    11 |
+| `SessionIncoming/receive/dd=on`           |       8.8 µs | 8.8 µs |      ~ |            11 |    11 |
+| `SessionIncoming/echo/dd=off/persist=off` |       6.9 µs | 6.9 µs |      ~ |            41 |    41 |
+| `SessionIncomingIOI/receive/dd=off`       |       2.4 µs | 2.4 µs |      ~ |            11 |    11 |
+| `SessionIncomingIOI/receive/dd=on`        |       5.0 µs | 5.0 µs |      ~ |            11 |    11 |
+| `SessionOutbound/persist=false`           |       9.5 µs | 9.5 µs |      ~ |           123 |   123 |
+
+Every other `SessionIncoming`, `SessionIncomingIOI` and `SessionOutbound` case
+was also `~`, with identical B/op and allocs/op.
+
+The session benchmarks' application implements all three interfaces. A
+throwaway variant whose application implemented only `FromApp`, so that the
+session used its no-op stand-ins, measured the same as the full application on
+receive, echo and outbound: `~` throughout, with identical allocations.
+
+The load generator, 3 runs each, medians, 20 s measured after a 5 s warmup. Its
+acceptor application now implements only `FromApp`.
+
+| Scenario         | p50 before | after | p99 before |  after | allocs/msg before | after |
+| ---------------- | ---------: | ----: | ---------: | -----: | ----------------: | ----: |
+| orders, 5,000/s  |      55 µs | 55 µs |      90 µs |  82 µs |             109.7 | 109.7 |
+| orders, 20,000/s |      56 µs | 56 µs |     125 µs | 121 µs |             109.7 | 109.7 |
+| ioi, 20,000/s    |      26 µs | 26 µs |      53 µs |  49 µs |             111.8 | 111.8 |
+
+Saturated, orders delivered 81,000/s before and 84,000/s after, and IOIs
+145,000/s and 146,000/s. Both are within the run-to-run spread, which was about
+±15% for orders and ±20% for IOIs.
+
 ## What the harness found
 
 These are the observations that motivated building the harness, recorded as
