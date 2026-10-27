@@ -566,6 +566,11 @@ func extractXMLDataField(parsedFieldBytes *TagValue, buffer []byte, dataLen int)
 		remBytes = buffer
 		return
 	}
+	if dataLen > len(buffer)-endIndex-2 {
+		err = parseError{OrigError: "extractXMLDataField: XMLDataLen runs past the end of the message"}
+		remBytes = buffer
+		return
+	}
 	endIndex += dataLen + 1
 
 	err = parsedFieldBytes.parse(buffer[:endIndex+1])
