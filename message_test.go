@@ -700,3 +700,13 @@ func TestBuildAfterRemoveAndSet(t *testing.T) {
 		t.Errorf("tag 55 written %v times in %q", n, raw)
 	}
 }
+
+func (s *MessageSuite) TestParseEmptyIntField() {
+	dict, err := datadictionary.Parse("spec/FIX44.xml")
+	s.Require().Nil(err)
+
+	raw := "8=FIX.4.4\x019=5\x0135=0\x019=\x0110=000\x01"
+	s.NotPanics(func() {
+		s.Error(ParseMessageWithDataDictionary(NewMessage(), bytes.NewBufferString(raw), dict, dict))
+	})
+}

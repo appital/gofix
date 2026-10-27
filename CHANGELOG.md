@@ -29,6 +29,7 @@
 * Removing a field and then setting it again no longer writes it twice with a BodyLength that counts it once
 * A session whose write loop was busy no longer busy-waits on it, which saturated the CPU and collapsed throughput once there were more sessions than spare cores
 * Integer fields, and a BodyLength, too large to fit in an `int` are now rejected as invalid instead of wrapping around
+* Reading an empty integer field now returns an error
 
 ## 0.9.12 (September 30, 2026)
 

@@ -37,6 +37,12 @@ func TestFIXInt_Read(t *testing.T) {
 
 	err = field.Read([]byte("blah"))
 	assert.NotNil(t, err, "Unexpected error")
+
+	for _, v := range []string{"", "-"} {
+		assert.NotPanics(t, func() {
+			assert.NotNil(t, field.Read([]byte(v)), "%q", v)
+		}, "%q", v)
+	}
 }
 
 func TestFIXInt_ReadRange(t *testing.T) {
