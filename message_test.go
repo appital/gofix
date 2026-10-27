@@ -721,3 +721,11 @@ func (s *MessageSuite) TestParseEmptyIntField() {
 		s.Error(ParseMessageWithDataDictionary(NewMessage(), bytes.NewBufferString(raw), dict, dict))
 	})
 }
+
+func (s *MessageSuite) TestParseMalformedReturnsError() {
+	for _, raw := range []string{"8=\x01", "8=FIX.4.4\x019=5\x01", "8=0\x019=0\x0135=0\x010=0\x01"} {
+		s.NotPanics(func() {
+			s.Error(ParseMessage(NewMessage(), bytes.NewBufferString(raw)), raw)
+		}, raw)
+	}
+}
