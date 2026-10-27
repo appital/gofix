@@ -27,14 +27,7 @@ type app struct {
 	registry *gofix.Registry
 }
 
-func (a *app) OnCreate(gofix.SessionID)                    {}
-func (a *app) OnLogon(gofix.SessionID)                     {}
-func (a *app) OnLogout(gofix.SessionID)                    {}
-func (a *app) ToAdmin(*gofix.Message, gofix.SessionID)     {}
-func (a *app) ToApp(*gofix.Message, gofix.SessionID) error { return nil }
-func (a *app) FromAdmin(*gofix.Message, gofix.SessionID) gofix.MessageRejectError {
-	return nil
-}
+var _ gofix.Application = (*app)(nil)
 
 func (a *app) FromApp(msg *gofix.Message, sessionID gofix.SessionID) gofix.MessageRejectError {
 	reply := gofix.NewMessage()

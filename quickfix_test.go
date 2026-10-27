@@ -216,11 +216,11 @@ func (s *SessionSuiteRig) Init() {
 	s.session = &session{
 		sessionID:    SessionID{BeginString: "FIX.4.2", TargetCompID: "TW", SenderCompID: "ISLD"},
 		store:        &s.MockStore,
-		application:  &s.MockApp,
 		log:          nullLog{},
 		messageOut:   s.Receiver.sendChannel,
 		sessionEvent: make(chan internal.Event),
 	}
+	s.session.setApplication(&s.MockApp)
 	s.MaxLatency = 120 * time.Second
 }
 

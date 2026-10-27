@@ -34,16 +34,7 @@ func newServerApp() *serverApp {
 	return a
 }
 
-func (a *serverApp) OnCreate(gofix.SessionID)                {}
-func (a *serverApp) OnLogon(gofix.SessionID)                 {}
-func (a *serverApp) OnLogout(gofix.SessionID)                {}
-func (a *serverApp) ToAdmin(*gofix.Message, gofix.SessionID) {}
-
-func (a *serverApp) ToApp(*gofix.Message, gofix.SessionID) error { return nil }
-
-func (a *serverApp) FromAdmin(*gofix.Message, gofix.SessionID) gofix.MessageRejectError {
-	return nil
-}
+var _ gofix.Application = (*serverApp)(nil)
 
 func (a *serverApp) FromApp(msg *gofix.Message, sessionID gofix.SessionID) gofix.MessageRejectError {
 	a.received.Add(1)
@@ -133,6 +124,11 @@ func newClientApp(hist *histogram, ringSize int) *clientApp {
 	}
 }
 
+var (
+	_ gofix.Application    = (*clientApp)(nil)
+	_ gofix.SessionHandler = (*clientApp)(nil)
+)
+
 func (a *clientApp) OnCreate(gofix.SessionID) {}
 
 func (a *clientApp) OnLogon(sessionID gofix.SessionID) {
@@ -142,14 +138,7 @@ func (a *clientApp) OnLogon(sessionID gofix.SessionID) {
 	}
 }
 
-func (a *clientApp) OnLogout(gofix.SessionID)                {}
-func (a *clientApp) ToAdmin(*gofix.Message, gofix.SessionID) {}
-
-func (a *clientApp) ToApp(*gofix.Message, gofix.SessionID) error { return nil }
-
-func (a *clientApp) FromAdmin(*gofix.Message, gofix.SessionID) gofix.MessageRejectError {
-	return nil
-}
+func (a *clientApp) OnLogout(gofix.SessionID) {}
 
 func (a *clientApp) FromApp(msg *gofix.Message, _ gofix.SessionID) gofix.MessageRejectError {
 	if !a.measuring.Load() {
