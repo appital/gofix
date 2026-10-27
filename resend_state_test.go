@@ -238,7 +238,7 @@ func (a *seqRecordingApp) FromApp(msg *Message, sessionID SessionID) MessageReje
 // by the time they are processed, the reused Message holds another message.
 func (s *resendStateTestSuite) TestFixMsgInReuseIncomingMessages() {
 	app := &seqRecordingApp{MockApp: &s.MockApp}
-	s.session.application = app
+	s.session.setApplication(app)
 	s.session.ReuseIncomingMessages = true
 	s.session.peerTimer = internal.NewEventTimer(func() {})
 	defer s.session.peerTimer.Stop()

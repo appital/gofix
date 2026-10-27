@@ -37,11 +37,14 @@ const (
 // A MessageRoute is a function that can process a fromApp/fromAdmin callback.
 type MessageRoute func(msg *Message, sessionID SessionID) MessageRejectError
 
-// A MessageRouter is a mutex for MessageRoutes.
+// A MessageRouter is a mutex for MessageRoutes. It implements Application, so it
+// can be passed directly to NewAcceptor or NewInitiator.
 type MessageRouter struct {
 	routes   map[routeKey]MessageRoute
 	registry *Registry
 }
+
+var _ Application = (*MessageRouter)(nil)
 
 // NewMessageRouter returns an initialized MessageRouter instance. Pass WithRegistry when the
 // router serves sessions registered in a Registry other than the DefaultRegistry.
@@ -68,6 +71,12 @@ func (c MessageRouter) Route(msg *Message, sessionID SessionID) MessageRejectErr
 	}
 
 	return c.tryRoute(string(beginString), string(msgType), msg, sessionID)
+}
+
+// FromApp routes an application message received from the counterparty. It
+// makes MessageRouter an Application.
+func (c MessageRouter) FromApp(msg *Message, sessionID SessionID) MessageRejectError {
+	return c.Route(msg, sessionID)
 }
 
 func (c MessageRouter) tryRoute(beginString string, msgType string, msg *Message, sessionID SessionID) MessageRejectError {

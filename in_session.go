@@ -411,7 +411,7 @@ func (state *inSession) generateSequenceReset(session *session, beginSeqNo int, 
 		sequenceReset.Header.SetField(tagOrigSendingTime, origSendingTime)
 	}
 
-	session.application.ToAdmin(sequenceReset, session.sessionID)
+	session.interceptor.ToAdmin(sequenceReset, session.sessionID)
 
 	msgBytes := sequenceReset.build()
 

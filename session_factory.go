@@ -91,7 +91,7 @@ func (f sessionFactory) createSession(
 	if err = f.reg().register(session); err != nil {
 		return
 	}
-	application.OnCreate(session.sessionID)
+	session.sessionHandler.OnCreate(session.sessionID)
 	session.log.OnEvent("Created session")
 
 	return
@@ -488,7 +488,7 @@ func (f sessionFactory) newSession(
 	s.messageEvent = make(chan bool, 1)
 	s.admin = make(chan any)
 	s.done = make(chan struct{})
-	s.application = application
+	s.setApplication(application)
 	return
 }
 

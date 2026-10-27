@@ -82,6 +82,30 @@ Generated code has the `.generated.go` suffix. To change it, edit the generator
 in `cmd/generate-fix`. For applications with a custom FIX spec, run `go run
 ./cmd/generate-fix --help` to see how to generate code from your own XML.
 
+## Applications
+
+Unlike QuickFIX/Go, `gofix.Application` has one method, `FromApp`. The other
+callbacks are in two optional interfaces, which the engine uses when the
+application passed to `NewAcceptor` or `NewInitiator` implements them:
+
+- `gofix.SessionHandler`: `OnCreate`, `OnLogon` and `OnLogout`.
+- `gofix.MessageInterceptor`: `ToAdmin`, `FromAdmin` and `ToApp`.
+
+A method with the wrong signature still compiles but is never called, so an
+acceptor that checks Logons in `FromAdmin` could accept them unchecked. Assert
+each interface your application is meant to implement at compile time:
+
+```go
+var (
+	_ gofix.Application        = (*myApp)(nil)
+	_ gofix.SessionHandler     = (*myApp)(nil)
+	_ gofix.MessageInterceptor = (*myApp)(nil)
+)
+```
+
+A `*gofix.MessageRouter` is itself an `Application`, so it can be passed to
+`NewAcceptor` or `NewInitiator` directly.
+
 ## Metrics
 
 gofix does not record metrics itself. To count the messages and bytes each

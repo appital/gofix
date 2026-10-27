@@ -54,6 +54,10 @@ type session struct {
 	sessionEvent chan internal.Event
 	messageEvent chan bool
 	application  Application
+	// sessionHandler and interceptor are the Application's optional
+	// interfaces, or no-op stand-ins when it does not implement them.
+	sessionHandler SessionHandler
+	interceptor    MessageInterceptor
 	Validator
 	stateMachine
 	stateTimer *internal.EventTimer
@@ -76,6 +80,25 @@ type session struct {
 	// incoming is the Message every inbound message is parsed into when
 	// ReuseIncomingMessages is enabled.
 	incoming *Message
+}
+
+// setApplication sets the session's Application, and looks up once which of
+// the optional interfaces it implements so that callbacks need no type
+// assertion.
+func (s *session) setApplication(app Application) {
+	s.application = app
+
+	if h, ok := app.(SessionHandler); ok {
+		s.sessionHandler = h
+	} else {
+		s.sessionHandler = noopSessionHandler{}
+	}
+
+	if i, ok := app.(MessageInterceptor); ok {
+		s.interceptor = i
+	} else {
+		s.interceptor = noopMessageInterceptor{}
+	}
 }
 
 // incomingMessage returns the Message to parse the next inbound message into.
@@ -276,7 +299,7 @@ func (s *session) generateSequenceReset(beginSeqNo int, endSeqNo int, inReplyTo 
 		sequenceReset.Header.SetField(tagOrigSendingTime, origSendingTime)
 	}
 
-	s.application.ToAdmin(sequenceReset, s.sessionID)
+	s.interceptor.ToAdmin(sequenceReset, s.sessionID)
 
 	msgBytes := sequenceReset.build()
 
@@ -318,7 +341,7 @@ func (s *session) resend(msg *Message) bool {
 
 	s.insertSendingTime(msg)
 
-	return s.application.ToApp(msg, s.sessionID) == nil
+	return s.interceptor.ToApp(msg, s.sessionID) == nil
 }
 
 // queueForSend will validate, persist, and queue the message for send.
@@ -417,7 +440,7 @@ func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes
 	}
 
 	if isAdminMessageType(msgType) {
-		s.application.ToAdmin(msg, s.sessionID)
+		s.interceptor.ToAdmin(msg, s.sessionID)
 		if bytes.Equal(msgType, msgTypeLogon) {
 			var resetSeqNumFlag FIXBoolean
 			if msg.Body.Has(tagResetSeqNumFlag) {
@@ -437,7 +460,7 @@ func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes
 			}
 		}
 	} else {
-		if err = s.application.ToApp(msg, s.sessionID); err != nil {
+		if err = s.interceptor.ToApp(msg, s.sessionID); err != nil {
 			return
 		}
 	}
@@ -631,7 +654,7 @@ func (s *session) handleLogon(msg *Message) error {
 	s.sentReset = false
 
 	s.peerTimer.Reset(time.Duration(float64(1.2) * float64(s.HeartBtInt)))
-	s.application.OnLogon(s.sessionID)
+	s.sessionHandler.OnLogon(s.sessionID)
 
 	// Evaluate tag 789 to see if we end up with an implied gapfill/resend.
 	if s.EnableNextExpectedMsgSeqNum && !msg.Body.Has(tagResetSeqNumFlag) {
@@ -736,7 +759,7 @@ func (s *session) fromCallback(msg *Message) MessageRejectError {
 	}
 
 	if isAdminMessageType(msgType) {
-		return s.application.FromAdmin(msg, s.sessionID)
+		return s.interceptor.FromAdmin(msg, s.sessionID)
 	}
 
 	return s.application.FromApp(msg, s.sessionID)

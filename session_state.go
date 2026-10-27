@@ -220,7 +220,7 @@ func (sm *stateMachine) handleDisconnectState(s *session) {
 	}
 
 	if doOnLogout {
-		s.application.OnLogout(s.sessionID)
+		s.sessionHandler.OnLogout(s.sessionID)
 	}
 
 	s.onDisconnect()

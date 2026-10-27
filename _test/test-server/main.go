@@ -28,6 +28,11 @@ type EchoApplication struct {
 	OrderIds map[string]bool
 }
 
+var (
+	_ gofix.Application    = (*EchoApplication)(nil)
+	_ gofix.SessionHandler = (*EchoApplication)(nil)
+)
+
 func (e EchoApplication) OnCreate(sessionID gofix.SessionID) {
 	e.log.Printf("OnCreate %v\n", sessionID.String())
 }
@@ -38,17 +43,6 @@ func (e *EchoApplication) OnLogon(sessionID gofix.SessionID) {
 func (e *EchoApplication) OnLogout(sessionID gofix.SessionID) {
 	e.log.Printf("OnLogout %v\n", sessionID.String())
 }
-func (e EchoApplication) ToAdmin(msgBuilder *gofix.Message, sessionID gofix.SessionID) {
-}
-
-func (e EchoApplication) ToApp(msgBuilder *gofix.Message, sessionID gofix.SessionID) (err error) {
-	return
-}
-
-func (e EchoApplication) FromAdmin(msg *gofix.Message, sessionID gofix.SessionID) (err gofix.MessageRejectError) {
-	return
-}
-
 func (e *EchoApplication) FromApp(msg *gofix.Message, sessionID gofix.SessionID) (err gofix.MessageRejectError) {
 	e.log.Println("Got Message ", msg)
 	return router.Route(msg, sessionID)
