@@ -1,12 +1,12 @@
 # gofix
 
-[![Build Status](https://github.com/appital/gofix/workflows/CI/badge.svg)](https://github.com/appital/gofix/actions) [![GoDoc](https://godoc.org/github.com/appital/gofix?status.png)](https://godoc.org/github.com/appital/gofix) [![Go Report Card](https://goreportcard.com/badge/github.com/appital/gofix)](https://goreportcard.com/report/github.com/appital/gofix)
+[![Build Status](https://github.com/appital/gofix/workflows/CI/badge.svg)](https://github.com/appital/gofix/actions) [![GoDoc](https://godoc.org/github.com/appital/gofix?status.png)](https://godoc.org/github.com/appital/gofix)
 
 A [FIX Protocol](https://www.fixtrading.org/) engine for Go, maintained by Appital.
 
 | ⚠️ Warning                                                                                                                                                                                                                                                                                                                                                                  |
 | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| gofix is an experimental fork built for Appital's own use. We do not support it for any other use. Its API and behaviour may change without notice, and we do not plan to accept outside feature requests or provide help with integration. **For most projects we strongly recommend the upstream [QuickFIX/Go](https://github.com/quickfixgo/quickfix) library instead.** |
+| gofix is an experimental fork built for Appital's own use. We do not support it for any other use. Its API and behaviour may change without notice, and we do not currently plan to accept outside feature requests or provide help with integration. **For most projects we strongly recommend the upstream [QuickFIX/Go](https://github.com/quickfixgo/quickfix) library instead.** |
 
 ## Why a fork?
 
