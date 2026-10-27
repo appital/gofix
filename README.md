@@ -1,6 +1,6 @@
 # gofix
 
-[![Build Status](https://github.com/appital/gofix/workflows/CI/badge.svg)](https://github.com/appital/gofix/actions) [![GoDoc](https://godoc.org/github.com/appital/gofix?status.png)](https://godoc.org/github.com/appital/gofix)
+[![Tests](https://github.com/appital/gofix/actions/workflows/tests.yaml/badge.svg)](https://github.com/appital/gofix/actions/workflows/tests.yaml) [![golangci-lint](https://github.com/appital/gofix/actions/workflows/golangci-lint.yaml/badge.svg)](https://github.com/appital/gofix/actions/workflows/golangci-lint.yaml) [![GoDoc](https://godoc.org/github.com/appital/gofix?status.png)](https://godoc.org/github.com/appital/gofix)
 
 A [FIX Protocol](https://www.fixtrading.org/) engine for Go, maintained by Appital.
 
