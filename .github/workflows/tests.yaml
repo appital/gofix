@@ -1,0 +1,40 @@
+name: Tests
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch/PR to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# NOTE: Temporarily stripped down to a single build + unit test job while the
+# library is in flux and CI minutes are limited. The previous acceptance test
+# suites can be restored from git history.
+jobs:
+  test:
+    name: Build & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Setup
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: make build-src
+      - name: Vet
+        run: make vet
+      - name: Unit test (non-db)
+        run: make test-ci-nodb

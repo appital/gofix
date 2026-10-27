@@ -1,4 +1,4 @@
-name: CI
+name: golangci-lint
 on:
   push:
     tags:
@@ -18,9 +18,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# NOTE: Temporarily stripped down to lint plus a single build + unit test job
-# while the library is in flux and CI minutes are limited. The previous
-# acceptance test suites can be restored from git history.
 jobs:
   lint:
     name: Lint
@@ -35,26 +32,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
       - name: golangci-lint (metrics/prometheus)
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
           working-directory: metrics/prometheus
-
-  test:
-    name: Build & Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Setup
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build
-        run: make build-src
-      - name: Vet
-        run: make vet
-      - name: Unit test (non-db)
-        run: make test-ci-nodb
