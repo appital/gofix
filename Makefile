@@ -37,6 +37,17 @@ lint: linters-install
 # docker run -t --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.15.0 golangci-lint run -v
 # See https://golangci-lint.run/welcome/install/ for more details.
 
+# Fuzz each target in turn; go test can only fuzz one at a time. `make test`
+# already runs their seed corpora. Pass FUZZ= to pick one, e.g.
+#   make fuzz FUZZ=FuzzAtoi FUZZ_TIME=10m
+FUZZ ?= FuzzAtoi FuzzReadMessageChunked FuzzBuildParseRoundTrip FuzzFieldValueRead
+FUZZ_TIME ?= 1m
+
+fuzz:
+	for t in $(FUZZ); do go test -run "^$$t$$" -fuzz "^$$t$$" -fuzztime $(FUZZ_TIME) . || exit 1; done
+
+.PHONY: fuzz
+
 # ---------------------------------------------------------------
 # Targets related to benchmarking and profiling -
 #
