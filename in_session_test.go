@@ -335,6 +335,37 @@ func (s *InSessionTestSuite) TestFIXMsgInResendRequestNoMessagePersist() {
 	s.State(inSession{})
 }
 
+func (s *InSessionTestSuite) TestFIXMsgInResendRequestOutOfRange() {
+	tests := []struct {
+		name               string
+		beginSeqNo, endSeq int
+		refTag             Tag
+	}{
+		{"zero BeginSeqNo", 0, 0, tagBeginSeqNo},
+		{"negative BeginSeqNo", -1, 0, tagBeginSeqNo},
+		{"negative EndSeqNo", 1, -1, tagEndSeqNo},
+	}
+
+	for _, test := range tests {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			s.MockApp.On("FromAdmin").Return(nil)
+			s.MockApp.On("ToAdmin")
+
+			msg := s.ResendRequest(test.beginSeqNo)
+			msg.Body.SetField(tagEndSeqNo, FIXInt(test.endSeq))
+			s.fixMsgIn(s.session, msg)
+
+			s.MockApp.AssertNumberOfCalls(s.T(), "ToAdmin", 1)
+			s.LastToAdminMessageSent()
+			s.MessageType(string(msgTypeReject), s.MockApp.lastToAdmin)
+			s.FieldEquals(tagRefTagID, int(test.refTag), s.MockApp.lastToAdmin.Body)
+			s.NextTargetMsgSeqNum(2)
+			s.State(inSession{})
+		})
+	}
+}
+
 func (s *InSessionTestSuite) TestFIXMsgInResendRequestDoNotSendApp() {
 	s.MockApp.On("ToAdmin")
 	s.session.Timeout(s.session, internal.NeedHeartbeat)

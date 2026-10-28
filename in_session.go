@@ -198,6 +198,13 @@ func (state inSession) handleResendRequest(session *session, msg *Message) (next
 
 	endSeqNo := int(endSeqNoField)
 
+	if beginSeqNo < 1 {
+		return state.processReject(session, msg, ValueIsIncorrect(tagBeginSeqNo))
+	}
+	if endSeqNo < 0 {
+		return state.processReject(session, msg, ValueIsIncorrect(tagEndSeqNo))
+	}
+
 	session.log.OnEventf("Received ResendRequest FROM: %d TO: %d", beginSeqNo, endSeqNo)
 	expectedSeqNum := session.store.NextSenderMsgSeqNum()
 
