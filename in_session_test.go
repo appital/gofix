@@ -489,3 +489,34 @@ func (s *InSessionTestSuite) TestFIXMsgInTargetTooLowPossDup() {
 	s.State(inSession{})
 	s.NextTargetMsgSeqNum(2)
 }
+
+// keepingLog keeps the slices passed to OnIncoming, as an asynchronous or
+// batching log might.
+type keepingLog struct {
+	nullLog
+	incoming [][]byte
+}
+
+func (l *keepingLog) OnIncoming(msg []byte) { l.incoming = append(l.incoming, msg) }
+
+// With ReuseIncomingMessages, the buffer a message was read into is reused
+// once the message has been processed, so the log must not be handed it.
+func (s *InSessionTestSuite) TestIncomingLogKeepsMessageWithReuse() {
+	log := &keepingLog{}
+	s.session.log = log
+	s.session.ReuseIncomingMessages = true
+	s.session.peerTimer = internal.NewEventTimer(func() {})
+	defer s.session.peerTimer.Stop()
+
+	s.MockApp.On("FromApp").Return(nil)
+	raw := s.NewOrderSingle().build()
+	buf := bytes.NewBuffer(bytes.Clone(raw))
+	s.session.Incoming(s.session, fixIn{bytes: buf, receiveTime: time.Now(), pooled: true})
+
+	// Stand in for the next message read into the recycled buffer.
+	buf.Reset()
+	buf.Write(bytes.Repeat([]byte{'X'}, len(raw)))
+
+	s.Require().Len(log.incoming, 1)
+	s.Equal(string(raw), string(log.incoming[0]))
+}
