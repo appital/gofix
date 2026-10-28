@@ -77,3 +77,18 @@ func TestStringParse(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(6, i)
 }
+
+func TestNewFileStoreRefusesPathInSessionID(t *testing.T) {
+	root := t.TempDir()
+	dirname := path.Join(root, "store")
+
+	for _, compID := range []string{"../escaped", `..\escaped`, "/tmp/escaped"} {
+		sessionID := gofix.SessionID{BeginString: "FIX.4.4", SenderCompID: compID, TargetCompID: "TARGET"}
+		_, err := newFileStore(sessionID, dirname, false)
+		require.Error(t, err, compID)
+	}
+
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "only the store directory should exist")
+}

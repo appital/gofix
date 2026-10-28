@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"runtime/debug"
@@ -366,6 +367,10 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 			a.globalLog.OnEventf("Session %v not found for incoming message: %s", sessID, msgBytes)
 			return
 		}
+		if err := checkDynamicSessionID(sessID); err != nil {
+			a.globalLog.OnEventf("Dynamic session refused: %v", err)
+			return
+		}
 		dynamicSession, err := a.sessionFactory.createSession(sessID, a.storeFactory, a.settings.globalSettings.clone(), a.logFactory, a.app)
 		if err != nil {
 			a.globalLog.OnEventf("Dynamic session %v failed to create: %v", sessID, err)
@@ -474,4 +479,43 @@ func (a *Acceptor) SetTLSConfig(tlsConfig *tls.Config) {
 // which will be used in the Start() method.
 func (a *Acceptor) SetNewListenerCallback(cb NewListenerCallback) {
 	a.newListenerCallback = cb
+}
+
+// maxDynamicSessionIDLength is the longest BeginString, CompID, SubID or
+// LocationID with which a peer may create a dynamic session.
+const maxDynamicSessionIDLength = 64
+
+// checkDynamicSessionID returns an error unless each part of id, taken from a
+// peer's Logon, is made up of letters, digits, '.', '_' and '-', and is no
+// longer than maxDynamicSessionIDLength. The SessionID is passed to the store
+// and log factories, which may use it to name files, so a peer must not be
+// able to choose one that names a path.
+func checkDynamicSessionID(id SessionID) error {
+	for _, part := range []struct {
+		name, value string
+		required    bool
+	}{
+		{"BeginString", id.BeginString, true},
+		{"SenderCompID", id.SenderCompID, true},
+		{"SenderSubID", id.SenderSubID, false},
+		{"SenderLocationID", id.SenderLocationID, false},
+		{"TargetCompID", id.TargetCompID, true},
+		{"TargetSubID", id.TargetSubID, false},
+		{"TargetLocationID", id.TargetLocationID, false},
+	} {
+		switch {
+		case part.value == "" && part.required:
+			return fmt.Errorf("%s is empty", part.name)
+		case len(part.value) > maxDynamicSessionIDLength:
+			return fmt.Errorf("%s is longer than %d bytes", part.name, maxDynamicSessionIDLength)
+		}
+		for i := range len(part.value) {
+			c := part.value[i]
+			if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') || c == '.' || c == '_' || c == '-' {
+				continue
+			}
+			return fmt.Errorf("%s %q contains %q", part.name, part.value, c)
+		}
+	}
+	return nil
 }

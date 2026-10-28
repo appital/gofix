@@ -711,6 +711,13 @@ const (
 	//
 	// Use DynamicQualifier=Y if initiator client sessions are using the same SenderCompID.
 	//
+	// A dynamic session is created only if the BeginString and each CompID,
+	// SubID and LocationID in the peer's Logon are made up of letters, digits,
+	// '.', '_' and '-', and are no longer than 64 bytes; other Logons are
+	// dropped. The session, and its store and log, are created before
+	// FromAdmin sees the Logon, so use Acceptor.SetConnectionValidator to limit
+	// who can create one.
+	//
 	// Required: No
 	//
 	// Default: N
