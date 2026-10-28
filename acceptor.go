@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
@@ -56,6 +58,8 @@ type Acceptor struct {
 	connectionValidator   ConnectionValidator
 	tlsConfig             *tls.Config
 	newListenerCallback   NewListenerCallback
+	maxMessageSize        int
+	firstMessageTimeout   time.Duration
 	sessionFactory
 }
 
@@ -201,6 +205,29 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		sessionHostPort: make(map[SessionID]int),
 		listeners:       make(map[string]net.Listener),
 		sessionFactory:  sessionFactory{registry: o.registry, metricsFactory: o.metricsFactory},
+
+		maxMessageSize:      defaultMaxMessageSize,
+		firstMessageTimeout: 30 * time.Second,
+	}
+	if settings.GlobalSettings().HasSetting(config.MaxMessageSize) {
+		if a.maxMessageSize, err = settings.GlobalSettings().IntSetting(config.MaxMessageSize); err != nil {
+			return
+		}
+		if a.maxMessageSize <= 0 {
+			return nil, errors.New("MaxMessageSize must be greater than zero")
+		}
+	}
+	if settings.GlobalSettings().HasSetting(config.SocketReadTimeout) {
+		if a.firstMessageTimeout, err = settings.GlobalSettings().DurationSetting(config.SocketReadTimeout); err != nil {
+			timeout, intErr := settings.GlobalSettings().IntSetting(config.SocketReadTimeout)
+			if intErr != nil {
+				return nil, intErr
+			}
+			a.firstMessageTimeout = time.Duration(timeout) * time.Second
+		}
+		if a.firstMessageTimeout <= 0 {
+			return nil, errors.New("SocketReadTimeout must be greater than zero")
+		}
 	}
 	if a.settings.GlobalSettings().HasSetting(config.DynamicSessions) {
 		if a.dynamicSessions, err = settings.globalSettings.BoolSetting(config.DynamicSessions); err != nil {
@@ -270,7 +297,14 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 	defer unwatch()
 
 	reader := bufio.NewReader(netConn)
-	parser := newParser(reader)
+	parser := newParserWithLimit(reader, a.maxMessageSize)
+
+	if a.firstMessageTimeout > 0 {
+		if err := netConn.SetReadDeadline(time.Now().Add(a.firstMessageTimeout)); err != nil {
+			a.globalLog.OnEvent(err.Error())
+			return
+		}
+	}
 
 	msgBytes, err := parser.ReadMessage()
 	if err != nil {
@@ -279,6 +313,10 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 		} else {
 			a.globalLog.OnEvent(err.Error())
 		}
+		return
+	}
+	if err := netConn.SetReadDeadline(time.Time{}); err != nil {
+		a.globalLog.OnEvent(err.Error())
 		return
 	}
 
@@ -386,6 +424,14 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 		}
 		session = dynamicSession
 		defer session.stop()
+	}
+
+	if session.MaxMessageSize > 0 {
+		if msgBytes.Len() > session.MaxMessageSize {
+			a.globalLog.OnEventf("Session %v first message exceeds MaxMessageSize", sessID)
+			return
+		}
+		parser.maxMessageSize = session.MaxMessageSize
 	}
 
 	a.sessionAddr.Store(sessID, netConn.RemoteAddr())

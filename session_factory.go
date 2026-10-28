@@ -138,6 +138,9 @@ func (f sessionFactory) newSession(
 
 	// Always use a default message validator without data dictionaries
 	s.Validator = NewValidator(validatorSettings, nil, nil)
+	if err = f.buildMaxMessageSizeSettings(s, settings); err != nil {
+		return
+	}
 	if sessionID.IsFIXT() {
 		if s.DefaultApplVerID, err = settings.Setting(config.DefaultApplVerID); err != nil {
 			return
@@ -624,6 +627,20 @@ func (f sessionFactory) buildMaxMessagesPerSecondSettings(session *session, sett
 
 		if session.MaxMessagesPerSecond < 0 {
 			return errors.New("MaxMessagesPerSecond must be greater than or equal to zero")
+		}
+	}
+
+	return
+}
+
+func (f sessionFactory) buildMaxMessageSizeSettings(session *session, settings *SessionSettings) (err error) {
+	session.MaxMessageSize = defaultMaxMessageSize
+	if settings.HasSetting(config.MaxMessageSize) {
+		if session.MaxMessageSize, err = settings.IntSetting(config.MaxMessageSize); err != nil {
+			return
+		}
+		if session.MaxMessageSize <= 0 {
+			return errors.New("MaxMessageSize must be greater than zero")
 		}
 	}
 

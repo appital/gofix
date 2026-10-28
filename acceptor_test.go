@@ -460,3 +460,139 @@ func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {
 		assert.NotEqual(t, "/../../../tmp/x", id.TargetCompID, "store created for %v", id)
 	}
 }
+
+func TestNewAcceptor_MessageSizeAndReadTimeoutSettings(t *testing.T) {
+	tests := []struct {
+		setting string
+		value   string
+		valid   bool
+	}{
+		{config.MaxMessageSize, "2048", true},
+		{config.MaxMessageSize, "0", false},
+		{config.MaxMessageSize, "-1", false},
+		{config.MaxMessageSize, "a", false},
+		{config.SocketReadTimeout, "500ms", true},
+		{config.SocketReadTimeout, "5", true},
+		{config.SocketReadTimeout, "0", false},
+		{config.SocketReadTimeout, "-1s", false},
+		{config.SocketReadTimeout, "a", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.setting+"="+test.value, func(t *testing.T) {
+			settings := NewSettings()
+			settings.GlobalSettings().Set(config.SocketAcceptPort, "5003")
+			settings.GlobalSettings().Set(test.setting, test.value)
+
+			_, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
+			if test.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestAcceptor_FirstMessageLimits(t *testing.T) {
+	logon := func() []byte {
+		msg := NewMessage()
+		msg.Header.
+			SetField(tagBeginString, FIXString(BeginStringFIX42)).
+			SetField(tagSenderCompID, FIXString("target")).
+			SetField(tagTargetCompID, FIXString("sender")).
+			SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now()}).
+			SetField(tagMsgSeqNum, FIXInt(1)).
+			SetField(tagMsgType, FIXString(msgTypeLogon))
+		msg.Body.
+			SetField(tagEncryptMethod, FIXString("0")).
+			SetField(tagHeartBtInt, FIXInt(30))
+		return msg.build()
+	}
+
+	// startAcceptor starts an acceptor on port 5003 with the given global and
+	// session settings, and connects to it.
+	startAcceptor := func(t *testing.T, global, session map[string]string) (*Acceptor, SessionID, net.Conn) {
+		sessionSettings := NewSessionSettings()
+		sessionSettings.Set(config.BeginString, BeginStringFIX42)
+		sessionSettings.Set(config.SenderCompID, "sender")
+		sessionSettings.Set(config.TargetCompID, "target")
+		sessionSettings.Set(config.HeartBtInt, "30")
+		for k, v := range session {
+			sessionSettings.Set(k, v)
+		}
+
+		settings := NewSettings()
+		settings.GlobalSettings().Set(config.SocketAcceptPort, "5003")
+		for k, v := range global {
+			settings.GlobalSettings().Set(k, v)
+		}
+		sessionID, err := settings.AddSession(sessionSettings)
+		require.NoError(t, err)
+
+		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+		require.NoError(t, err)
+		require.NoError(t, acceptor.Start())
+		t.Cleanup(acceptor.Stop)
+
+		conn, err := net.Dial("tcp", "127.0.0.1:5003")
+		require.NoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+		return acceptor, sessionID, conn
+	}
+
+	// requireClosed checks the acceptor closes conn without answering, well
+	// before the test's own deadline.
+	requireClosed := func(t *testing.T, conn net.Conn) {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+		_, err := conn.Read(make([]byte, 1))
+		require.ErrorIs(t, err, io.EOF)
+	}
+
+	t.Run("connection that sends nothing is closed", func(t *testing.T) {
+		_, _, conn := startAcceptor(t, map[string]string{config.SocketReadTimeout: "200ms"}, nil)
+
+		start := time.Now()
+		requireClosed(t, conn)
+		assert.Less(t, time.Since(start), 2*time.Second)
+	})
+
+	t.Run("BodyLength over the global limit closes the connection", func(t *testing.T) {
+		_, _, conn := startAcceptor(t, map[string]string{config.MaxMessageSize: "1024"}, nil)
+
+		_, err := conn.Write([]byte("8=FIX.4.2\x019=2000000000\x0135=A\x01"))
+		require.NoError(t, err)
+		requireClosed(t, conn)
+	})
+
+	t.Run("Logon over the session limit closes the connection", func(t *testing.T) {
+		msg := logon()
+		acceptor, sessionID, conn := startAcceptor(t, nil, map[string]string{config.MaxMessageSize: strconv.Itoa(len(msg) - 1)})
+
+		_, err := conn.Write(msg)
+		require.NoError(t, err)
+		requireClosed(t, conn)
+
+		_, ok := acceptor.RemoteAddr(sessionID)
+		assert.False(t, ok)
+	})
+
+	t.Run("Logon within the limits is accepted", func(t *testing.T) {
+		msg := logon()
+		acceptor, sessionID, conn := startAcceptor(t,
+			map[string]string{config.SocketReadTimeout: "200ms"},
+			map[string]string{config.MaxMessageSize: strconv.Itoa(len(msg))})
+
+		_, err := conn.Write(msg)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			_, ok := acceptor.RemoteAddr(sessionID)
+			return ok
+		}, 2*time.Second, 10*time.Millisecond)
+
+		// The first-message deadline no longer applies once logged on.
+		time.Sleep(400 * time.Millisecond)
+		_, ok := acceptor.RemoteAddr(sessionID)
+		assert.True(t, ok)
+	})
+}

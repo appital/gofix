@@ -27,10 +27,19 @@ import (
 const (
 	defaultBufSize = 4096
 
+	// defaultMaxMessageSize bounds an inbound frame unless a session sets
+	// MaxMessageSize. It is deliberately generous for FIX traffic but small
+	// enough that a peer cannot make the parser allocate without limit.
+	defaultMaxMessageSize = 1 << 20
+
 	// maxPooledRawBuffer is the largest buffer returned to rawBufferPool, so
 	// that one outsized message does not stay pinned in the pool.
 	maxPooledRawBuffer = 64 << 10
 )
+
+// errMessageTooLarge is returned when an inbound frame or its claimed
+// BodyLength exceeds the parser's limit.
+var errMessageTooLarge = errors.New("message exceeds maximum size")
 
 // rawBufferPool holds the buffers inbound messages are read into. Only
 // sessions with ReuseIncomingMessages enabled return buffers to it; otherwise
@@ -50,10 +59,18 @@ type parser struct {
 	bigBuffer, buffer []byte
 	reader            io.Reader
 	lastRead          time.Time
+
+	// maxMessageSize bounds the bytes a single frame may occupy. Zero means
+	// unbounded, which callers should not use for untrusted peers.
+	maxMessageSize int
 }
 
 func newParser(reader io.Reader) *parser {
-	return &parser{reader: reader}
+	return newParserWithLimit(reader, defaultMaxMessageSize)
+}
+
+func newParserWithLimit(reader io.Reader, maxMessageSize int) *parser {
+	return &parser{reader: reader, maxMessageSize: maxMessageSize}
 }
 
 func (p *parser) readMore() (int, error) {
@@ -79,7 +96,18 @@ func (p *parser) readMore() (int, error) {
 		p.buffer = newBuffer
 	}
 
-	n, e := p.reader.Read(p.buffer[len(p.buffer):cap(p.buffer)])
+	space := cap(p.buffer) - len(p.buffer)
+	if p.maxMessageSize > 0 {
+		remaining := p.maxMessageSize - len(p.buffer)
+		if remaining <= 0 {
+			return 0, errMessageTooLarge
+		}
+		if space > remaining {
+			space = remaining
+		}
+	}
+
+	n, e := p.reader.Read(p.buffer[len(p.buffer) : len(p.buffer)+space])
 	p.lastRead = time.Now()
 	p.buffer = p.buffer[:len(p.buffer)+n]
 	return n, e
@@ -90,6 +118,9 @@ func (p *parser) findIndex(delim []byte) (int, error) {
 }
 
 func (p *parser) findIndexAfterOffset(offset int, delim []byte) (int, error) {
+	// The size limit is enforced by readMore, only when more input is needed.
+	// The buffer may already hold more than the limit in whole messages, for
+	// example when the acceptor lowers it to the session's after the Logon.
 	for {
 		if offset > len(p.buffer) {
 			if n, err := p.readMore(); n == 0 && err != nil {
@@ -154,6 +185,9 @@ func (p *parser) jumpLength() (int, error) {
 	if length <= 0 || length > math.MaxInt-offset {
 		return length, errors.New("invalid length")
 	}
+	if p.maxMessageSize > 0 && length > p.maxMessageSize {
+		return 0, errMessageTooLarge
+	}
 
 	return offset + length, nil
 }
@@ -173,6 +207,9 @@ func (p *parser) ReadMessage() (msgBytes *bytes.Buffer, err error) {
 	index, err = p.findEndAfterOffset(index)
 	if err != nil {
 		return
+	}
+	if p.maxMessageSize > 0 && index > p.maxMessageSize {
+		return nil, errMessageTooLarge
 	}
 
 	msgBytes = rawBufferPool.Get().(*bytes.Buffer)

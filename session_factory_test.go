@@ -214,6 +214,27 @@ func (s *SessionFactorySuite) TestInvalidMaxMessagesPerSecond() {
 	}
 }
 
+func (s *SessionFactorySuite) TestMaxMessageSize() {
+	session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Nil(err)
+	s.Equal(defaultMaxMessageSize, session.MaxMessageSize)
+
+	s.SessionSettings.Set(config.MaxMessageSize, "2048")
+	session, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Nil(err)
+	s.Equal(2048, session.MaxMessageSize)
+}
+
+func (s *SessionFactorySuite) TestInvalidMaxMessageSize() {
+	for _, setting := range []string{"", "0", "-1", "a"} {
+		s.SetupTest()
+		s.SessionSettings.Set(config.MaxMessageSize, setting)
+
+		_, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+		s.NotNil(err)
+	}
+}
+
 func (s *SessionFactorySuite) TestStartAndEndTime() {
 	s.SessionSettings.Set(config.StartTime, "12:00:00")
 	s.SessionSettings.Set(config.EndTime, "14:00:00")

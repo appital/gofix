@@ -11,6 +11,7 @@ type SessionSettings struct {
 	HeartBtInt                   time.Duration
 	HeartBtIntOverride           bool
 	MaxMessagesPerSecond         int
+	MaxMessageSize               int
 	SessionTime                  *TimeRange
 	InitiateLogon                bool
 	ResendRequestChunkSize       int

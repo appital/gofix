@@ -593,6 +593,19 @@ const (
 	//  - A valid go time.Duration
 	SocketTimeout string = "SocketTimeout"
 
+	// SocketReadTimeout is how long the acceptor waits for the first message
+	// on a new connection before closing it. It bounds connections that have
+	// not yet identified a session, which have no logon timeout of their own.
+	//
+	// Required: No
+	//
+	// Default: 30s
+	//
+	// Valid Values:
+	//  - A valid go time.Duration
+	//  - An integer number of seconds
+	SocketReadTimeout string = "SocketReadTimeout"
+
 	// ProxyType sets the type of proxy server to connect to.
 	// Only used for initiators.
 	//
@@ -1108,6 +1121,22 @@ const (
 	// Valid Values:
 	//  - A positive integer
 	MaxMessagesPerSecond string = "MaxMessagesPerSecond"
+
+	// MaxMessageSize is the largest inbound FIX message, in bytes, that the
+	// session accepts. A peer that sends a larger frame, or claims a larger
+	// BodyLength, is disconnected before the message is parsed. This bounds
+	// the memory a single connection can consume.
+	//
+	// The acceptor applies the global value (or the default) to the first
+	// message, before the session is known, and the session's value after that.
+	//
+	// Required: No
+	//
+	// Default: 1048576 (1 MiB)
+	//
+	// Valid Values:
+	//  - A positive integer
+	MaxMessageSize string = "MaxMessageSize"
 
 	// ReuseIncomingMessages makes the session parse every inbound message into
 	// the same Message, and recycle the buffer it was read into, rather than
