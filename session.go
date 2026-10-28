@@ -753,6 +753,13 @@ func (s *session) verifySelect(msg *Message, checkTooHigh bool, checkTooLow bool
 }
 
 func (s *session) verifyMsgAgainstAppImpl(msg *Message) MessageRejectError {
+	// Parsing kept a repeated or misplaced tag out of the header, so the
+	// checks before this one could not act on it. The message is still
+	// rejected, whatever the validator settings.
+	if msg.parseReject != nil {
+		return msg.parseReject
+	}
+
 	if s.Validator != nil {
 		if reject := s.Validator.Validate(msg); reject != nil {
 			return reject

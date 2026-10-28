@@ -298,6 +298,9 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 
 	reader := bufio.NewReader(netConn)
 	parser := newParserWithLimit(reader, a.maxMessageSize)
+	// A malformed first message (including a bad logon) closes the connection;
+	// it must not leave the acceptor waiting for another one.
+	parser.resync = false
 
 	if a.firstMessageTimeout > 0 {
 		if err := netConn.SetReadDeadline(time.Now().Add(a.firstMessageTimeout)); err != nil {
@@ -433,6 +436,7 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 		}
 		parser.maxMessageSize = session.MaxMessageSize
 	}
+	parser.resync = true
 
 	a.sessionAddr.Store(sessID, netConn.RemoteAddr())
 	msgIn := make(chan fixIn, session.InChanCapacity)

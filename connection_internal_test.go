@@ -45,7 +45,7 @@ func TestWriteLoop(t *testing.T) {
 
 func TestReadLoop(t *testing.T) {
 	msgIn := make(chan fixIn)
-	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x01garbage8=FIX.4.0\x019=4\x01foo\x0110=103\x01"
+	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 
 	parser := newParser(strings.NewReader(stream))
 	go readLoop(parser, msgIn, nullLog{}, nullMetrics{})

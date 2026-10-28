@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -550,4 +551,54 @@ func (s *InSessionTestSuite) TestIncomingLogKeepsMessageWithReuse() {
 
 	s.Require().Len(log.incoming, 1)
 	s.Equal(string(raw), string(log.incoming[0]))
+}
+
+// withExtraFields returns msg as wire bytes with fields appended to its body.
+func withExtraFields(msg *Message, fields ...string) *bytes.Buffer {
+	raw := string(msg.build())
+	beginString := raw[:strings.IndexByte(raw, '\x01')]
+	bodyStart := strings.Index(raw, "\x019=")
+	bodyStart += strings.IndexByte(raw[bodyStart+1:], '\x01') + 2
+	body := raw[bodyStart : strings.LastIndex(raw, "\x0110=")+1]
+	for _, field := range fields {
+		body += field + "\x01"
+	}
+	return bytes.NewBufferString(wireMessageBody(beginString, body))
+}
+
+func (s *InSessionTestSuite) TestFIXMsgInRejectsDuplicateAndMisplacedTags() {
+	tests := []struct {
+		name    string
+		msgType string
+		fields  []string
+		text    string
+		tag     Tag
+	}{
+		{"duplicate header tag", "D", []string{"43=N", "43=Y"}, "Tag appears more than once", tagPossDupFlag},
+		{"header tag after body", "D", []string{"38=100", "43=Y"}, "Tag specified out of required order", tagPossDupFlag},
+		{"duplicate session body tag", string(msgTypeTestRequest), []string{"112=A", "112=B"}, "Tag appears more than once", tagTestReqID},
+	}
+
+	for _, test := range tests {
+		s.Run(test.name, func() {
+			s.SetupTest()
+
+			msg := NewMessage()
+			s.Require().NoError(ParseMessage(msg, withExtraFields(s.buildMessage(test.msgType), test.fields...)))
+
+			// FromApp and FromAdmin are not expected: the message is rejected first.
+			s.MockApp.On("ToAdmin")
+			s.session.fixMsgIn(s.session, msg)
+
+			s.MockApp.AssertExpectations(s.T())
+			s.State(inSession{})
+			s.LastToAdminMessageSent()
+			s.MessageType(string(msgTypeReject), s.MockApp.lastToAdmin)
+			// FIX 4.2 has no SessionRejectReason for these, so the reason is
+			// given as Text.
+			s.FieldEquals(tagText, test.text, s.MockApp.lastToAdmin.Body)
+			s.FieldEquals(tagRefTagID, int(test.tag), s.MockApp.lastToAdmin.Body)
+			s.NextTargetMsgSeqNum(2)
+		})
+	}
 }

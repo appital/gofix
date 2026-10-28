@@ -40,6 +40,124 @@ type msgParser struct {
 	trailerBytes            []byte
 	foundBody               bool
 	foundTrailer            bool
+
+	// seen records the singleton tags that must appear at most once. A
+	// bit is set for each tag that has been seen, so a duplicate can be
+	// rejected without a map allocation.
+	seen [4]uint64
+}
+
+// maxParsedFields bounds the number of fields a frame may declare. Together
+// with the parser's byte limit this stops a frame of SOH bytes from turning
+// into an allocation many times its own size.
+const maxParsedFields = 1 << 16
+
+// singletonTag reports whether tag must appear at most once in a message.
+// These are the tags the session trusts for version, identity, sequencing and
+// integrity decisions.
+func singletonTag(tag Tag) bool {
+	switch tag {
+	case tagBeginString, tagBodyLength, tagMsgSeqNum, tagMsgType,
+		tagSenderCompID, tagSenderSubID, tagSenderLocationID,
+		tagTargetCompID, tagTargetSubID, tagTargetLocationID,
+		tagSendingTime, tagCheckSum:
+		return true
+	}
+	return false
+}
+
+// markSeen records a singleton tag and reports an error if it was already
+// present.
+func (mp *msgParser) markSeen(tag Tag) error {
+	if !singletonTag(tag) || tag < 0 || tag >= Tag(len(mp.seen)*64) {
+		return nil
+	}
+
+	word, bit := int(tag)/64, uint64(1)<<(uint(tag)%64)
+	if mp.seen[word]&bit != 0 {
+		return parseError{OrigError: fmt.Sprintf("duplicate tag %d", tag)}
+	}
+	mp.seen[word] |= bit
+
+	return nil
+}
+
+// sessionBodyTag reports whether tag is a body field the session itself acts
+// on. None of them is a repeating group member in any FIX version, so a
+// repeat is a duplicate even when no data dictionary says so.
+func sessionBodyTag(tag Tag) bool {
+	switch tag {
+	case tagBeginSeqNo, tagEndSeqNo, tagNewSeqNo, tagGapFillFlag,
+		tagHeartBtInt, tagTestReqID, tagResetSeqNumFlag,
+		tagNextExpectedMsgSeqNum, tagDefaultApplVerID:
+		return true
+	}
+	return false
+}
+
+// rejectMessage records the first reason the session must reject the message
+// for. Parsing carries on, so the rest of the message is still available.
+func (mp *msgParser) rejectMessage(reject MessageRejectError) {
+	if mp.msg.parseReject == nil {
+		mp.msg.parseReject = reject
+	}
+}
+
+// addHeaderField adds a header field, rejecting a duplicate singleton tag. A
+// header tag after the body, or a repeated one, is recorded for the session
+// to reject. A late tag still goes in the header, so the session can refer
+// to the message's MsgSeqNum when it rejects it.
+func (mp *msgParser) addHeaderField(f field) error {
+	tag := fieldTag(f)
+	if err := mp.markSeen(tag); err != nil {
+		return err
+	}
+
+	if mp.foundBody {
+		mp.rejectMessage(tagSpecifiedOutOfRequiredOrder(tag))
+	}
+
+	if !mp.msg.Header.addIfAbsent(f) {
+		switch tag {
+		case tagHopCompID, tagHopSendingTime, tagHopRefID:
+			// Members of the NoHops group repeat, and keep their last value.
+			mp.msg.Header.add(f)
+		default:
+			mp.rejectMessage(tagAppearsMoreThanOnce(tag))
+		}
+	}
+	return nil
+}
+
+// addTrailerField adds a trailer field, rejecting a duplicate singleton tag.
+// Any other repeated trailer tag is recorded for the session to reject.
+func (mp *msgParser) addTrailerField(f field) error {
+	tag := fieldTag(f)
+	if err := mp.markSeen(tag); err != nil {
+		return err
+	}
+
+	if !mp.msg.Trailer.addIfAbsent(f) {
+		mp.rejectMessage(tagAppearsMoreThanOnce(tag))
+	}
+	return nil
+}
+
+// checksBodyDuplicates reports whether a repeat of the body tag must be
+// rejected: when the message's definition shows the tag is not a group member,
+// or when the session acts on it. Without a dictionary any other repeat may be
+// a group member, and keeps its last value as before.
+func (mp *msgParser) checksBodyDuplicates(tag Tag) bool {
+	return mp.msgDef != nil || sessionBodyTag(tag)
+}
+
+// addUniqueBodyField adds a body field or a repeating group whose repeat must
+// be rejected. A repeat is recorded for the session to reject, and keeps the
+// first value.
+func (mp *msgParser) addUniqueBodyField(f field) {
+	if !mp.msg.Body.addIfAbsent(f) {
+		mp.rejectMessage(tagAppearsMoreThanOnce(fieldTag(f)))
+	}
 }
 
 // in the message header, the first 3 tags in the message header must be 8,9,35.
@@ -119,6 +237,12 @@ type Message struct {
 
 	// Field bytes as they appear in the raw message.
 	fields []TagValue
+
+	// parseReject is the first problem found while parsing that the session
+	// must reject the message for: a tag that appears twice, or a header tag
+	// after the body. A repeated tag keeps its first value, so the checks the
+	// session makes before rejecting see the same value as everything else.
+	parseReject MessageRejectError
 }
 
 // ToMessage returns the message itself.
@@ -158,6 +282,7 @@ func (m *Message) CopyInto(to *Message) {
 	m.Trailer.CopyInto(&to.Trailer.FieldMap)
 
 	to.ReceiveTime = m.ReceiveTime
+	to.parseReject = m.parseReject
 	to.bodyBytes = make([]byte, len(m.bodyBytes))
 	copy(to.bodyBytes, m.bodyBytes)
 	to.fields = make([]TagValue, len(m.fields))
@@ -223,11 +348,15 @@ func doParsing(mp *msgParser) (err error) {
 	mp.msg.Header.clearNoLock()
 	mp.msg.Body.clearNoLock()
 	mp.msg.Trailer.clearNoLock()
+	mp.msg.parseReject = nil
 
 	// Allocate expected message fields in one chunk.
 	fieldCount := bytes.Count(mp.rawBytes, []byte{'\001'})
 	if fieldCount == 0 {
 		return parseError{OrigError: fmt.Sprintf("No Fields detected in %s", string(mp.rawBytes))}
+	}
+	if fieldCount > maxParsedFields {
+		return parseError{OrigError: fmt.Sprintf("too many fields: %d", fieldCount)}
 	}
 	if cap(mp.msg.fields) < fieldCount {
 		mp.msg.fields = make([]TagValue, fieldCount)
@@ -253,7 +382,9 @@ func doParsing(mp *msgParser) (err error) {
 	if mp.rawBytes, err = extractSpecificField(&mp.msg.fields[mp.fieldIndex], tagBeginString, mp.rawBytes); err != nil {
 		return
 	}
-	mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+	if err = mp.addHeaderField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+		return
+	}
 
 	// Get body length.
 	mp.fieldIndex++
@@ -261,7 +392,9 @@ func doParsing(mp *msgParser) (err error) {
 	if mp.rawBytes, err = extractSpecificField(mp.parsedFieldBytes, tagBodyLength, mp.rawBytes); err != nil {
 		return
 	}
-	mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+	if err = mp.addHeaderField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+		return
+	}
 
 	// Get msg type.
 	mp.fieldIndex++
@@ -269,7 +402,9 @@ func doParsing(mp *msgParser) (err error) {
 	if mp.rawBytes, err = extractSpecificField(mp.parsedFieldBytes, tagMsgType, mp.rawBytes); err != nil {
 		return
 	}
-	mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+	if err = mp.addHeaderField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+		return
+	}
 
 	// Resolve the message definition once, rather than per field.
 	mp.msgDef = nil
@@ -279,17 +414,18 @@ func doParsing(mp *msgParser) (err error) {
 
 	// Start parsing.
 	mp.fieldIndex++
-	xmlDataLen := 0
-	xmlDataMsg := false
+	var (
+		dataLen        int
+		pendingDataTag Tag
+	)
 	mp.trailerBytes = []byte{}
 	mp.foundBody = false
 	mp.foundTrailer = false
 	for {
 		mp.parsedFieldBytes = &mp.msg.fields[mp.fieldIndex]
-		if xmlDataLen > 0 {
-			mp.rawBytes, err = extractXMLDataField(mp.parsedFieldBytes, mp.rawBytes, xmlDataLen)
-			xmlDataLen = 0
-			xmlDataMsg = true
+		if pendingDataTag != 0 {
+			mp.rawBytes, err = extractDataField(mp.parsedFieldBytes, mp.rawBytes, dataLen, pendingDataTag)
+			pendingDataTag = 0
 		} else {
 			mp.rawBytes, err = extractField(mp.parsedFieldBytes, mp.rawBytes)
 		}
@@ -299,16 +435,29 @@ func doParsing(mp *msgParser) (err error) {
 
 		switch {
 		case isHeaderField(mp.parsedFieldBytes.tag, mp.transportDataDictionary):
-			mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			if err = mp.addHeaderField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+				return
+			}
 		case isTrailerField(mp.parsedFieldBytes.tag, mp.transportDataDictionary):
-			mp.msg.Trailer.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			if err = mp.addTrailerField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+				return
+			}
 			mp.foundTrailer = true
 		case isNumInGroupField(mp.msgDef, mp.parsedFieldBytes.tag):
-			parseGroup(mp, mp.parsedFieldBytes.tag)
+			if err = parseGroup(mp, mp.parsedFieldBytes.tag); err != nil {
+				return
+			}
 		default:
 			mp.foundBody = true
 			mp.trailerBytes = mp.rawBytes
-			mp.msg.Body.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			// Adding without checking stays inline, which matters for the
+			// many repeated group members of a message parsed without a
+			// dictionary.
+			if mp.checksBodyDuplicates(mp.parsedFieldBytes.tag) {
+				mp.addUniqueBodyField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			} else {
+				mp.msg.Body.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			}
 		}
 		if mp.parsedFieldBytes.tag == tagCheckSum {
 			break
@@ -318,11 +467,19 @@ func doParsing(mp *msgParser) (err error) {
 			mp.msg.bodyBytes = mp.rawBytes
 		}
 
-		if mp.parsedFieldBytes.tag == tagXMLDataLen {
-			xmlDataLen, _ = mp.msg.Header.getIntNoLock(tagXMLDataLen)
+		if nextTag := dataTagFor(mp.parsedFieldBytes.tag); nextTag != 0 {
+			n, parseErr := atoi(mp.parsedFieldBytes.value)
+			if parseErr != nil || n < 0 {
+				return parseError{OrigError: fmt.Sprintf("invalid length for data tag %d", mp.parsedFieldBytes.tag)}
+			}
+			dataLen, pendingDataTag = n, nextTag
 		}
 		mp.fieldIndex++
 	}
+
+	// A frame of mostly delimiters would otherwise leave stale zero entries
+	// after the fields that were actually parsed.
+	mp.msg.fields = mp.msg.fields[:mp.fieldIndex+1]
 
 	// This will happen if there are no fields in the body
 	if mp.foundTrailer && !mp.foundBody {
@@ -336,26 +493,53 @@ func doParsing(mp *msgParser) (err error) {
 	}
 
 	length := 0
+	total := 0
 	for _, field := range mp.msg.fields {
 		switch field.tag {
 		case tagBeginString, tagBodyLength, tagCheckSum: // Tags do not contribute to length.
 		default:
 			length += field.length()
 		}
+		if field.tag != tagCheckSum {
+			total += field.total()
+		}
 	}
 
 	bodyLength, err := mp.msg.Header.getIntNoLock(tagBodyLength)
 	if err != nil {
 		err = parseError{OrigError: err.Error()}
-	} else if length != bodyLength && !xmlDataMsg {
+		return
+	}
+	if length != bodyLength {
 		err = parseError{OrigError: fmt.Sprintf("Incorrect Message Length, expected %d, got %d", bodyLength, length)}
+		return
+	}
+
+	checkSumBytes, reject := mp.msg.Trailer.getBytesNoLock(tagCheckSum)
+	if reject != nil {
+		err = parseError{OrigError: "missing CheckSum"}
+		return
+	}
+	if len(checkSumBytes) != 3 {
+		err = parseError{OrigError: fmt.Sprintf("invalid CheckSum %q", checkSumBytes)}
+		return
+	}
+	checkSum, parseErr := atoi(checkSumBytes)
+	if parseErr != nil || checkSum < 0 || checkSum > 255 {
+		err = parseError{OrigError: fmt.Sprintf("invalid CheckSum %q", checkSumBytes)}
+		return
+	}
+	if checkSum != total%256 {
+		err = parseError{OrigError: fmt.Sprintf("Incorrect CheckSum, expected %03d, got %s", total%256, checkSumBytes)}
 	}
 
 	return
 }
 
 // parseGroup iterates through a repeating group to maintain correct order of those fields.
-func parseGroup(mp *msgParser, groupTag Tag) {
+// It runs only when the message's definition is known, so every repeated body
+// tag it adds is rejected.
+func parseGroup(mp *msgParser, groupTag Tag) error {
 	mp.foundBody = true
 	dm := mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]
 
@@ -364,13 +548,35 @@ func parseGroup(mp *msgParser, groupTag Tag) {
 	tags := append(tagBuf[:0], groupTag)
 	group := getGroupFieldDef(mp.msgDef, tags)
 
+	var (
+		dataLen        int
+		pendingDataTag Tag
+	)
+
 parseLoop:
 	for {
 		mp.fieldIndex++
 		mp.parsedFieldBytes = &mp.msg.fields[mp.fieldIndex]
 		preExtractBytes := mp.rawBytes
-		mp.rawBytes, _ = extractField(mp.parsedFieldBytes, mp.rawBytes)
+		var err error
+		if pendingDataTag != 0 {
+			mp.rawBytes, err = extractDataField(mp.parsedFieldBytes, mp.rawBytes, dataLen, pendingDataTag)
+			pendingDataTag = 0
+		} else {
+			mp.rawBytes, err = extractField(mp.parsedFieldBytes, mp.rawBytes)
+		}
+		if err != nil {
+			return err
+		}
 		mp.trailerBytes = mp.rawBytes
+
+		if nextTag := dataTagFor(mp.parsedFieldBytes.tag); nextTag != 0 {
+			n, parseErr := atoi(mp.parsedFieldBytes.value)
+			if parseErr != nil || n < 0 {
+				return parseError{OrigError: fmt.Sprintf("invalid length for data tag %d", mp.parsedFieldBytes.tag)}
+			}
+			dataLen, pendingDataTag = n, nextTag
+		}
 
 		// Is this field a member for the group.
 		if isGroupMember(mp.parsedFieldBytes.tag, group) {
@@ -385,13 +591,17 @@ parseLoop:
 			dm = append(dm, *mp.parsedFieldBytes)
 		} else if isHeaderField(mp.parsedFieldBytes.tag, mp.transportDataDictionary) {
 			// Found a header tag for some reason..
-			mp.msg.Body.add(dm)
-			mp.msg.Header.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			mp.addUniqueBodyField(dm)
+			if err = mp.addHeaderField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+				return err
+			}
 			break
 		} else if isTrailerField(mp.parsedFieldBytes.tag, mp.transportDataDictionary) {
 			// Found the trailer at the end of the message.
-			mp.msg.Body.add(dm)
-			mp.msg.Trailer.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			mp.addUniqueBodyField(dm)
+			if err = mp.addTrailerField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]); err != nil {
+				return err
+			}
 			mp.foundTrailer = true
 			// Restore the buffer that still holds the trailer so the caller strips
 			// it from bodyBytes; otherwise the trailer stays embedded and resend
@@ -403,7 +613,7 @@ parseLoop:
 			// Is this a new group not inside the existing group.
 			if isNumInGroupField(mp.msgDef, mp.parsedFieldBytes.tag) {
 				// Add the current repeating group.
-				mp.msg.Body.add(dm)
+				mp.addUniqueBodyField(dm)
 				// Cycle again with the new group.
 				dm = mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1]
 				group = mp.msgDef.Fields[int(mp.parsedFieldBytes.tag)]
@@ -420,13 +630,15 @@ parseLoop:
 				}
 			}
 			// Add the repeating group.
-			mp.msg.Body.add(dm)
+			mp.addUniqueBodyField(dm)
 			// Add the next body field.
-			mp.msg.Body.add(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
+			mp.addUniqueBodyField(mp.msg.fields[mp.fieldIndex : mp.fieldIndex+1])
 
 			break
 		}
 	}
+
+	return nil
 }
 
 // isNumInGroupField evaluates if this tag is the start of a top-level repeating group.
@@ -569,17 +781,64 @@ func extractSpecificField(field *TagValue, expectedTag Tag, buffer []byte) (remB
 	return
 }
 
-func extractXMLDataField(parsedFieldBytes *TagValue, buffer []byte, dataLen int) (remBytes []byte, err error) {
-	endIndex := bytes.IndexByte(buffer, '=')
-	if endIndex == -1 {
-		err = parseError{OrigError: "extractField: No Trailing Delim in " + string(buffer)}
-		remBytes = buffer
-		return
+// dataTagFor returns the data field that must follow a length field, or zero
+// if tag is not a length field. It covers every LENGTH field paired with a
+// DATA field in the FIX 4.0 to 5.0 SP2 and FIXT 1.1 specifications.
+func dataTagFor(tag Tag) Tag {
+	switch tag {
+	case tagSignatureLength:
+		// The only data field not numbered one above its length field.
+		return tagSignature
+	case tagSecureDataLen, // SecureData
+		tagRawDataLength, // RawData
+		tagXMLDataLen,    // XmlData
+		348,              // EncodedIssuerLen
+		350,              // EncodedSecurityDescLen
+		352,              // EncodedListExecInstLen
+		354,              // EncodedTextLen
+		356,              // EncodedSubjectLen
+		358,              // EncodedHeadlineLen
+		360,              // EncodedAllocTextLen
+		362,              // EncodedUnderlyingIssuerLen
+		364,              // EncodedUnderlyingSecurityDescLen
+		445,              // EncodedListStatusTextLen
+		618,              // EncodedLegIssuerLen
+		621,              // EncodedLegSecurityDescLen
+		1184,             // SecurityXMLLen
+		1277,             // DerivativeEncodedIssuerLen
+		1280,             // DerivativeEncodedSecurityDescLen
+		1282,             // DerivativeSecurityXMLLen
+		1359,             // EncodedSymbolLen
+		1397,             // EncodedMktSegmDescLen
+		1401,             // EncryptedPasswordLen
+		1403,             // EncryptedNewPasswordLen
+		1468,             // EncodedSecurityListDescLen
+		1618,             // RelationshipRiskEncodedSecurityDescLen
+		1620:             // RiskEncodedSecurityDescLen
+		return tag + 1
 	}
+	return 0
+}
+
+// extractDataField parses a length-prefixed DATA field. The value may contain
+// SOH, so its end comes from dataLen rather than from the next delimiter.
+func extractDataField(parsedFieldBytes *TagValue, buffer []byte, dataLen int, expectedTag Tag) (remBytes []byte, err error) {
+	if dataLen < 0 {
+		return buffer, parseError{OrigError: fmt.Sprintf("negative length for data tag %d", expectedTag)}
+	}
+
+	endIndex := bytes.IndexByte(buffer, '=')
+	if endIndex < 0 {
+		return buffer, parseError{OrigError: "extractDataField: No '=' in " + string(buffer)}
+	}
+
+	tag, tagErr := atoi(buffer[:endIndex])
+	if tagErr != nil || Tag(tag) != expectedTag {
+		return buffer, parseError{OrigError: fmt.Sprintf("extractDataField: expected tag %d, got %q", expectedTag, buffer[:endIndex])}
+	}
+
 	if dataLen > len(buffer)-endIndex-2 {
-		err = parseError{OrigError: "extractXMLDataField: XMLDataLen runs past the end of the message"}
-		remBytes = buffer
-		return
+		return buffer, parseError{OrigError: fmt.Sprintf("extractDataField: length %d for tag %d runs past the end of the message", dataLen, expectedTag)}
 	}
 	endIndex += dataLen + 1
 

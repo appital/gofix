@@ -54,7 +54,7 @@ func (suite *MessageRouterTestSuite) givenTheRoute(beginString, msgType string) 
 }
 
 func (suite *MessageRouterTestSuite) givenTheMessage(msgBytes []byte) {
-	err := ParseMessage(suite.msg, bytes.NewBuffer(msgBytes))
+	err := ParseMessage(suite.msg, bytes.NewBufferString(withValidCheckSum(string(msgBytes))))
 	suite.Nil(err)
 
 	var beginString FIXString

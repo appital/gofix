@@ -400,6 +400,21 @@ func (m *FieldMap) add(f field) {
 	m.tagLookup[t] = f
 }
 
+// addIfAbsent adds f unless its tag is already present, and reports whether it
+// was added. The existing value is left in place.
+func (m *FieldMap) addIfAbsent(f field) bool {
+	m.ensureLookup()
+
+	t := fieldTag(f)
+	if _, ok := m.tagLookup[t]; ok {
+		return false
+	}
+
+	m.appendTag(t)
+	m.tagLookup[t] = f
+	return true
+}
+
 func (m *FieldMap) getOrCreate(tag Tag) field {
 	m.rwLock.Lock()
 	defer m.rwLock.Unlock()

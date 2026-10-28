@@ -86,23 +86,22 @@ func (s *ParserSuite) TestLengthPastMaxInt() {
 }
 
 func (s *ParserSuite) TestJumpLength() {
-	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01"
+	first := "8=FIXT.1.1\x019=95\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x01"
+	second := "8=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01"
 
-	s.reader = strings.NewReader(stream)
+	s.reader = strings.NewReader(first + second)
 	index, err := s.parser.jumpLength()
 	s.Nil(err)
-
-	expectedIndex := 111 + 17 - 1
-	s.Equal(expectedIndex, index)
+	s.Equal(len(first), index)
 }
 
 func (s *ParserSuite) TestBadLength() {
 	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01"
 
 	s.reader = strings.NewReader(stream)
-	bytes, _ := s.parser.ReadMessage()
-
-	s.Equal(stream, bytes.String())
+	msg, err := s.parser.ReadMessage()
+	s.Nil(msg)
+	s.NotNil(err)
 }
 
 func (s *ParserSuite) TestFindStart() {

@@ -63,6 +63,8 @@ const (
 	tagRefTagID             Tag = 371
 	tagRefSeqNum            Tag = 45
 	tagEncryptMethod        Tag = 98
+	tagRawDataLength        Tag = 95
+	tagRawData              Tag = 96
 	tagResetSeqNumFlag      Tag = 141
 	tagDefaultApplVerID     Tag = 1137
 	tagText                 Tag = 58

@@ -92,7 +92,7 @@ func TestValidate(t *testing.T) {
 
 	msg := NewMessage()
 	for _, test := range tests {
-		assert.Nil(t, ParseMessage(msg, bytes.NewBuffer(test.MessageBytes)))
+		assert.Nil(t, ParseMessage(msg, bytes.NewBufferString(withValidCheckSum(string(test.MessageBytes)))))
 		reject := test.Validator.Validate(msg)
 
 		switch {

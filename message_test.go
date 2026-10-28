@@ -31,7 +31,7 @@ import (
 // inbound message instead - see BenchmarkParse in bench_parse_test.go, whose
 // fresh/reused split measures the difference.
 func BenchmarkParseMessage(b *testing.B) {
-	rawMsg := bytes.NewBufferString("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01")
+	rawMsg := bytes.NewBufferString(withValidCheckSum("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01"))
 
 	msg := NewMessage()
 
@@ -86,7 +86,7 @@ func (s *MessageSuite) TestParseXMLDataLenPastEnd() {
 }
 
 func (s *MessageSuite) TestParseMessage() {
-	rawMsg := bytes.NewBufferString("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01")
+	rawMsg := bytes.NewBufferString(withValidCheckSum("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01"))
 
 	err := ParseMessage(s.msg, rawMsg)
 	s.Nil(err)
@@ -120,7 +120,7 @@ func (s *MessageSuite) TestParseMessageWithDataDictionary() {
 			5050: nil,
 		},
 	}
-	rawMsg := bytes.NewBufferString("8=FIX.4.2\x019=126\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0110030=CUST\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x015050=HELLO\x0110=039\x01")
+	rawMsg := bytes.NewBufferString(withValidCheckSum("8=FIX.4.2\x019=126\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0110030=CUST\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x015050=HELLO\x0110=039\x01"))
 
 	err := ParseMessageWithDataDictionary(s.msg, rawMsg, dict, dict)
 	s.Nil(err)
@@ -130,7 +130,7 @@ func (s *MessageSuite) TestParseMessageWithDataDictionary() {
 
 func (s *MessageSuite) TestParseOutOfOrder() {
 	// Allow fields out of order, save for validation.
-	rawMsg := bytes.NewBufferString("8=FIX.4.0\x019=81\x0135=D\x0111=id\x0121=3\x0138=100\x0140=1\x0154=1\x0155=MSFT\x0134=2\x0149=TW\x0152=20140521-22:07:09\x0156=ISLD\x0110=250\x01")
+	rawMsg := bytes.NewBufferString(withValidCheckSum("8=FIX.4.0\x019=81\x0135=D\x0111=id\x0121=3\x0138=100\x0140=1\x0154=1\x0155=MSFT\x0134=2\x0149=TW\x0152=20140521-22:07:09\x0156=ISLD\x0110=250\x01"))
 	s.Nil(ParseMessage(s.msg, rawMsg))
 }
 
@@ -187,7 +187,7 @@ func (s *MessageSuite) TestBuild() {
 }
 
 func (s *MessageSuite) TestReBuild() {
-	rawMsg := bytes.NewBufferString("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01")
+	rawMsg := bytes.NewBufferString(withValidCheckSum("8=FIX.4.2\x019=104\x0135=D\x0134=2\x0149=TW\x0152=20140515-19:49:56.659\x0156=ISLD\x0111=100\x0121=1\x0140=1\x0154=1\x0155=TSLA\x0160=00010101-00:00:00.000\x0110=039\x01"))
 
 	s.Nil(ParseMessage(s.msg, rawMsg))
 
@@ -529,7 +529,7 @@ func (s *MessageSuite) TestReBuildWithRepeatingGroupWithDictionaryForResend() {
 }
 
 func (s *MessageSuite) TestReverseRoute() {
-	s.Nil(ParseMessage(s.msg, bytes.NewBufferString("8=FIX.4.2\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01")))
+	s.Nil(ParseMessage(s.msg, bytes.NewBufferString(withValidCheckSum("8=FIX.4.2\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01"))))
 
 	builder := s.msg.reverseRoute()
 
@@ -560,7 +560,7 @@ func (s *MessageSuite) TestReverseRoute() {
 }
 
 func (s *MessageSuite) TestReverseRouteIgnoreEmpty() {
-	s.Nil(ParseMessage(s.msg, bytes.NewBufferString("8=FIX.4.0\x019=128\x0135=D\x0134=2\x0149=TW\x0152=20060102-15:04:05\x0156=ISLD\x01115=\x01116=CS\x01128=MG\x01129=CB\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01")))
+	s.Nil(ParseMessage(s.msg, bytes.NewBufferString(withValidCheckSum("8=FIX.4.0\x019=128\x0135=D\x0134=2\x0149=TW\x0152=20060102-15:04:05\x0156=ISLD\x01115=\x01116=CS\x01128=MG\x01129=CB\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01"))))
 	builder := s.msg.reverseRoute()
 
 	s.False(builder.Header.Has(tagDeliverToCompID), "Should not reverse if empty")
@@ -568,7 +568,7 @@ func (s *MessageSuite) TestReverseRouteIgnoreEmpty() {
 
 func (s *MessageSuite) TestReverseRouteFIX40() {
 	// The onbehalfof/deliverto location id not supported in fix 4.0.
-	s.Nil(ParseMessage(s.msg, bytes.NewBufferString("8=FIX.4.0\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01")))
+	s.Nil(ParseMessage(s.msg, bytes.NewBufferString(withValidCheckSum("8=FIX.4.0\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01"))))
 
 	builder := s.msg.reverseRoute()
 
@@ -578,7 +578,7 @@ func (s *MessageSuite) TestReverseRouteFIX40() {
 }
 
 func (s *MessageSuite) TestCopyIntoMessage() {
-	msgString := "8=FIX.4.2\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01"
+	msgString := withValidCheckSum("8=FIX.4.2\x019=171\x0135=D\x0134=2\x0149=TW\x0150=KK\x0152=20060102-15:04:05\x0156=ISLD\x0157=AP\x01144=BB\x01115=JCD\x01116=CS\x01128=MG\x01129=CB\x01142=JV\x01143=RY\x01145=BH\x0111=ID\x0121=3\x0138=100\x0140=w\x0154=1\x0155=INTC\x0160=20060102-15:04:05\x0110=123\x01")
 	msgBuf := bytes.NewBufferString(msgString)
 	s.Nil(ParseMessage(s.msg, msgBuf))
 
