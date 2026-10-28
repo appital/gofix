@@ -27,6 +27,7 @@
 
 ### BUG FIXES
 * An application that implemented only some of the `SessionHandler` or `MessageInterceptor` methods had none of them called; each implemented method is now called. `NewAcceptor` and `NewInitiator` now return an error when the application has one of these methods with a signature that does not match, or with a pointer receiver on an application passed by value, instead of never calling it
+* With `ReuseIncomingMessages`, `Log.OnIncoming` was given the buffer the message was read into, which is then reused for later messages, possibly another session's. A log that kept the slice, for example to write it asynchronously, could record the wrong bytes. It is now given a copy
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
 * Removing a field and then setting it again no longer writes it twice with a BodyLength that counts it once
 * A session whose write loop was busy no longer busy-waits on it, which saturated the CPU and collapsed throughput once there were more sessions than spare cores

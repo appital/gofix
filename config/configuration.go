@@ -1112,6 +1112,10 @@ const (
 	// Copy out any values that must outlive the callback; Message.CopyInto is
 	// not a deep copy and does not make a message safe to keep.
 	//
+	// The session's Log is still given a copy of each message's bytes that it
+	// may keep, which costs one allocation per message unless the Log is the
+	// null log from NewNullLogFactory.
+	//
 	// Required: No
 	//
 	// Default: N

@@ -16,6 +16,7 @@
 package gofix
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -89,7 +90,16 @@ func (sm *stateMachine) Incoming(session *session, m fixIn) {
 		return
 	}
 
-	session.log.OnIncoming(m.bytes.Bytes())
+	incoming := m.bytes.Bytes()
+	// A pooled buffer is reused, possibly by another session, once this
+	// message has been processed, so a log that keeps the slice needs its
+	// own copy.
+	if session.ReuseIncomingMessages && m.pooled {
+		if _, ok := session.log.(nullLog); !ok {
+			incoming = bytes.Clone(incoming)
+		}
+	}
+	session.log.OnIncoming(incoming)
 
 	msg := session.incomingMessage()
 	if err := ParseMessageWithDataDictionary(msg, m.bytes, session.transportDataDictionary, session.appDataDictionary); err != nil {
