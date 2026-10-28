@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -373,5 +374,89 @@ func TestAcceptor_StopClosesConnections(t *testing.T) {
 		require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
 		_, err := io.Copy(io.Discard, conn)
 		assert.NoError(t, err, "connection should have been closed by the acceptor")
+	}
+}
+
+func TestCheckDynamicSessionID(t *testing.T) {
+	valid := SessionID{BeginString: BeginStringFIX42, SenderCompID: "SERVER", TargetCompID: "client_1.a-b", TargetSubID: "DESK2"}
+	assert.NoError(t, checkDynamicSessionID(valid))
+
+	for _, mutate := range []func(*SessionID){
+		func(id *SessionID) { id.TargetCompID = "/../../../tmp/x" },
+		func(id *SessionID) { id.TargetCompID = `..\x` },
+		func(id *SessionID) { id.TargetSubID = "a/b" },
+		func(id *SessionID) { id.SenderLocationID = "a b" },
+		func(id *SessionID) { id.BeginString = "FIX.4.2\n" },
+		func(id *SessionID) { id.TargetCompID = "" },
+		func(id *SessionID) { id.TargetCompID = strings.Repeat("A", maxDynamicSessionIDLength+1) },
+	} {
+		id := valid
+		mutate(&id)
+		assert.Error(t, checkDynamicSessionID(id), "%#v", id)
+	}
+}
+
+// recordingStoreFactory is a memory store factory that records the SessionIDs
+// it creates stores for.
+type recordingStoreFactory struct {
+	mu      sync.Mutex
+	created []SessionID
+}
+
+func (f *recordingStoreFactory) Create(sessionID SessionID) (MessageStore, error) {
+	f.mu.Lock()
+	f.created = append(f.created, sessionID)
+	f.mu.Unlock()
+	return NewMemoryStoreFactory().Create(sessionID)
+}
+
+func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {
+	sessionSettings := NewSessionSettings()
+	sessionSettings.Set(config.BeginString, BeginStringFIX42)
+	sessionSettings.Set(config.SenderCompID, "SERVER")
+	sessionSettings.Set(config.TargetCompID, "CLIENT")
+
+	settings := NewSettings()
+	settings.GlobalSettings().Set(config.SocketAcceptPort, "5002")
+	settings.GlobalSettings().Set(config.HeartBtInt, "30")
+	settings.GlobalSettings().Set(config.LogoutTimeout, "1")
+	settings.GlobalSettings().Set(config.DynamicSessions, "Y")
+	_, err := settings.AddSession(sessionSettings)
+	require.NoError(t, err)
+
+	stores := &recordingStoreFactory{}
+	acceptor, err := NewAcceptor(&benchApp{}, stores, settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+	require.NoError(t, acceptor.Start())
+	t.Cleanup(acceptor.Stop)
+
+	conn, err := net.Dial("tcp", "127.0.0.1:5002")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	logon := NewMessage()
+	logon.Header.
+		SetField(tagBeginString, FIXString(BeginStringFIX42)).
+		SetField(tagSenderCompID, FIXString("/../../../tmp/x")).
+		SetField(tagTargetCompID, FIXString("SERVER")).
+		SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now()}).
+		SetField(tagMsgSeqNum, FIXInt(1)).
+		SetField(tagMsgType, FIXString(msgTypeLogon))
+	logon.Body.
+		SetField(tagEncryptMethod, FIXString("0")).
+		SetField(tagHeartBtInt, FIXInt(30))
+	_, err = conn.Write(logon.build())
+	require.NoError(t, err)
+
+	// The acceptor closes the connection without answering once it has
+	// refused the session.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = conn.Read(make([]byte, 1024))
+	require.ErrorIs(t, err, io.EOF)
+
+	stores.mu.Lock()
+	defer stores.mu.Unlock()
+	for _, id := range stores.created {
+		assert.NotEqual(t, "/../../../tmp/x", id.TargetCompID, "store created for %v", id)
 	}
 }

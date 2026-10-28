@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +94,11 @@ func newFileStore(sessionID gofix.SessionID, dirname string, fileSync bool) (*fi
 	}
 
 	sessionPrefix := createFilenamePrefix(sessionID)
+	// An acceptor with DynamicSessions takes the SessionID from the peer, so
+	// it must not be able to name a file outside dirname.
+	if strings.ContainsAny(sessionPrefix, `/\`) || !filepath.IsLocal(sessionPrefix) {
+		return nil, fmt.Errorf("session ID cannot be used in a file name: %q", sessionPrefix)
+	}
 
 	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
 	if memErr != nil {
