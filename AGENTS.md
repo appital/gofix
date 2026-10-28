@@ -21,6 +21,8 @@ Guidance for AI coding agents working in this repository.
 - Lint: run `golangci-lint run --fix ./...` to fix what can be fixed
   automatically, then make sure `make lint` passes. It lints both modules.
 - Format: `make fmt`.
+- Fuzzing: `make fuzz` runs each fuzz target for `FUZZ_TIME` (default 1m).
+  Their seed corpora run as part of `make test`.
 - Acceptance tests: `make generate && make build-test-srv && make accept`
   (needs Ruby on `PATH`).
 - Benchmarks: `make bench-baseline`, then `make bench` and `make bench-compare`
