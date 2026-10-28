@@ -40,8 +40,42 @@ func TestSetApplicationDefaultsMissingInterfaces(t *testing.T) {
 	s.setApplication(app)
 
 	assert.Same(t, app, s.application)
-	assert.Equal(t, noopSessionHandler{}, s.sessionHandler)
-	assert.Equal(t, noopMessageInterceptor{}, s.interceptor)
+	assert.Equal(t, splitSessionHandler{noopSessionHandler{}, noopSessionHandler{}, noopSessionHandler{}}, s.sessionHandler)
+	assert.Equal(t, splitMessageInterceptor{noopMessageInterceptor{}, noopMessageInterceptor{}, noopMessageInterceptor{}}, s.interceptor)
+}
+
+func TestSetApplicationFindsEachCallback(t *testing.T) {
+	app := &logonChecker{}
+	s := &session{}
+	s.setApplication(app)
+
+	assert.Equal(t, splitMessageInterceptor{noopMessageInterceptor{}, app, noopMessageInterceptor{}}, s.interceptor)
+}
+
+// wrongFromAdmin has a FromAdmin that returns error rather than
+// MessageRejectError, so it does not implement FromAdminInterceptor.
+type wrongFromAdmin struct{ fromAppOnly }
+
+func (*wrongFromAdmin) FromAdmin(*Message, SessionID) error { return nil }
+
+// valueApp has OnLogon on its pointer type only.
+type valueApp struct{}
+
+func (valueApp) FromApp(*Message, SessionID) MessageRejectError { return nil }
+func (*valueApp) OnLogon(SessionID)                             {}
+
+func TestCheckApplication(t *testing.T) {
+	for _, app := range []Application{nil, &MockApp{}, &fromAppOnly{}, &logonChecker{}, NewMessageRouter(), &valueApp{}} {
+		assert.NoError(t, checkApplication(app), "%T", app)
+	}
+
+	assert.ErrorContains(t, checkApplication(&wrongFromAdmin{}), "FromAdmin method that does not match gofix.FromAdminInterceptor")
+	assert.ErrorContains(t, checkApplication(valueApp{}), "OnLogon method with a pointer receiver")
+
+	_, err := NewAcceptor(&wrongFromAdmin{}, nil, nil, nil)
+	assert.ErrorContains(t, err, "FromAdmin")
+	_, err = NewInitiator(&wrongFromAdmin{}, nil, nil, nil)
+	assert.ErrorContains(t, err, "FromAdmin")
 }
 
 func TestMessageRouterIsApplication(t *testing.T) {
@@ -100,4 +134,52 @@ func (s *FromAppOnlyTestSuite) TestLogonReceiveAndSend() {
 
 	s.Require().Nil(s.session.send(s.NewOrderSingle()))
 	s.NextSenderMsgSeqNum(4)
+}
+
+// logonChecker implements FromAdmin, to refuse every Logon, and no other
+// optional callback.
+type logonChecker struct {
+	fromAppOnly
+	logons int
+}
+
+var _ FromAdminInterceptor = (*logonChecker)(nil)
+
+func (a *logonChecker) FromAdmin(msg *Message, _ SessionID) MessageRejectError {
+	if msg.IsMsgTypeOf(string(msgTypeLogon)) {
+		a.logons++
+		return RejectLogon{"bad password"}
+	}
+	return nil
+}
+
+type LogonCheckerTestSuite struct {
+	SessionSuiteRig
+	app *logonChecker
+}
+
+func TestLogonCheckerTestSuite(t *testing.T) {
+	suite.Run(t, new(LogonCheckerTestSuite))
+}
+
+func (s *LogonCheckerTestSuite) SetupTest() {
+	s.Init()
+	s.app = &logonChecker{}
+	s.session.setApplication(s.app)
+}
+
+// An application that implements FromAdmin but not the rest of
+// MessageInterceptor still has FromAdmin called, and can refuse a Logon.
+func (s *LogonCheckerTestSuite) TestFromAdminRefusesLogon() {
+	s.session.State = logonState{}
+	s.IncrNextSenderMsgSeqNum()
+	s.MessageFactory.seqNum = 1
+	s.IncrNextTargetMsgSeqNum()
+
+	logon := s.Logon()
+	logon.Body.SetField(tagHeartBtInt, FIXInt(32))
+	s.fixMsgIn(s.session, logon)
+
+	s.Equal(1, s.app.logons)
+	s.State(latentState{})
 }

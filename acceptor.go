@@ -182,8 +182,14 @@ func (a *Acceptor) Registry() *Registry {
 	return a.reg()
 }
 
-// NewAcceptor creates and initializes a new Acceptor.
+// NewAcceptor creates and initializes a new Acceptor. It returns an error if
+// app has an optional callback method that would never be called; see
+// Application.
 func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Settings, logFactory LogFactory, opts ...Option) (a *Acceptor, err error) {
+	if err = checkApplication(app); err != nil {
+		return nil, err
+	}
+
 	o := newOptions(opts)
 	a = &Acceptor{
 		app:             app,
