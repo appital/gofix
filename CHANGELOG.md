@@ -8,6 +8,7 @@
 * TLS connections no longer restrict key exchange to the P-256 curve; Go's defaults are used, which prefer X25519 and the post-quantum hybrid X25519MLKEM768. The deprecated `PreferServerCipherSuites` option, which Go ignores, is no longer set
 
 ### FEATURES
+* Each optional `Application` callback now has its own interface: `OnCreateHandler`, `OnLogonHandler` and `OnLogoutHandler`, which make up `SessionHandler`, and `ToAdminInterceptor`, `FromAdminInterceptor` and `ToAppInterceptor`, which make up `MessageInterceptor`. The engine calls each callback the application implements, so an application can implement only `FromAdmin`, for example
 * Adds `Metrics` and `MetricsFactory` interfaces and a `WithMetrics` option for `NewAcceptor` and `NewInitiator`. Each session's `Metrics` is told of every message its connection sends and receives, with its length, so applications can record connection metrics with whatever system they use. Without the option nothing is recorded
 * `MessageRouter` implements `Application` with a `FromApp` method, so a router can be passed to `NewAcceptor` or `NewInitiator` directly
 * Adds the `github.com/appital/gofix/metrics/prometheus` module, a `MetricsFactory` that records message and byte counters with Prometheus
@@ -25,6 +26,7 @@
 * The write loop writes every message already waiting before flushing, through a buffered writer, so a backlog goes out in far fewer syscalls; the outbound channel holds up to 64 messages.
 
 ### BUG FIXES
+* An application that implemented only some of the `SessionHandler` or `MessageInterceptor` methods had none of them called; each implemented method is now called. `NewAcceptor` and `NewInitiator` now return an error when the application has one of these methods with a signature that does not match, or with a pointer receiver on an application passed by value, instead of never calling it
 * `RejectInvalidMessage` no longer panics on a field whose data dictionary type the validator does not recognise; such fields are accepted like strings
 * Removing a field and then setting it again no longer writes it twice with a BodyLength that counts it once
 * A session whose write loop was busy no longer busy-waits on it, which saturated the CPU and collapsed throughput once there were more sessions than spare cores

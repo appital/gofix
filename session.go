@@ -83,7 +83,7 @@ type session struct {
 }
 
 // setApplication sets the session's Application, and looks up once which of
-// the optional interfaces it implements so that callbacks need no type
+// the optional callbacks it implements so that callbacks need no type
 // assertion.
 func (s *session) setApplication(app Application) {
 	s.application = app
@@ -91,13 +91,23 @@ func (s *session) setApplication(app Application) {
 	if h, ok := app.(SessionHandler); ok {
 		s.sessionHandler = h
 	} else {
-		s.sessionHandler = noopSessionHandler{}
+		var noop noopSessionHandler
+		s.sessionHandler = splitSessionHandler{
+			OnCreateHandler: implementsOr[OnCreateHandler](app, noop),
+			OnLogonHandler:  implementsOr[OnLogonHandler](app, noop),
+			OnLogoutHandler: implementsOr[OnLogoutHandler](app, noop),
+		}
 	}
 
 	if i, ok := app.(MessageInterceptor); ok {
 		s.interceptor = i
 	} else {
-		s.interceptor = noopMessageInterceptor{}
+		var noop noopMessageInterceptor
+		s.interceptor = splitMessageInterceptor{
+			ToAdminInterceptor:   implementsOr[ToAdminInterceptor](app, noop),
+			FromAdminInterceptor: implementsOr[FromAdminInterceptor](app, noop),
+			ToAppInterceptor:     implementsOr[ToAppInterceptor](app, noop),
+		}
 	}
 }
 

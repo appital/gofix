@@ -88,8 +88,14 @@ func (i *Initiator) Registry() *Registry {
 	return i.reg()
 }
 
-// NewInitiator creates and initializes a new Initiator.
+// NewInitiator creates and initializes a new Initiator. It returns an error if
+// app has an optional callback method that would never be called; see
+// Application.
 func NewInitiator(app Application, storeFactory MessageStoreFactory, appSettings *Settings, logFactory LogFactory, opts ...Option) (*Initiator, error) {
+	if err := checkApplication(app); err != nil {
+		return nil, err
+	}
+
 	o := newOptions(opts)
 	i := &Initiator{
 		app:             app,

@@ -85,21 +85,26 @@ in `cmd/generate-fix`. For applications with a custom FIX spec, run `go run
 ## Applications
 
 Unlike QuickFIX/Go, `gofix.Application` has one method, `FromApp`. The other
-callbacks are in two optional interfaces, which the engine uses when the
-application passed to `NewAcceptor` or `NewInitiator` implements them:
+callbacks are optional, and the engine calls each one that the application
+passed to `NewAcceptor` or `NewInitiator` implements:
 
 - `gofix.SessionHandler`: `OnCreate`, `OnLogon` and `OnLogout`.
 - `gofix.MessageInterceptor`: `ToAdmin`, `FromAdmin` and `ToApp`.
 
-A method with the wrong signature still compiles but is never called, so an
-acceptor that checks Logons in `FromAdmin` could accept them unchecked. Assert
-each interface your application is meant to implement at compile time:
+Each callback also has an interface of its own, such as
+`gofix.FromAdminInterceptor`, so an application can implement only the ones it
+needs.
+
+`NewAcceptor` and `NewInitiator` return an error if the application has one of
+these methods with the wrong signature, since it would never be called. A
+compile-time assertion for each interface your application is meant to
+implement catches the mistake earlier:
 
 ```go
 var (
-	_ gofix.Application        = (*myApp)(nil)
-	_ gofix.SessionHandler     = (*myApp)(nil)
-	_ gofix.MessageInterceptor = (*myApp)(nil)
+	_ gofix.Application          = (*myApp)(nil)
+	_ gofix.SessionHandler       = (*myApp)(nil)
+	_ gofix.FromAdminInterceptor = (*myApp)(nil)
 )
 ```
 
