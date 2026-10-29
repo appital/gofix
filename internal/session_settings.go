@@ -26,6 +26,8 @@ type SessionSettings struct {
 	EnableResetSeqTime           bool
 	InChanCapacity               int
 	WriteTimeout                 time.Duration
+	MaxResendQueueMessages       int
+	MaxResendQueueBytes          int
 	ReuseIncomingMessages        bool
 
 	// Required on logon for FIXT.1.1 messages.

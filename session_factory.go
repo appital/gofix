@@ -148,6 +148,12 @@ func (f sessionFactory) newSession(
 	if s.WriteTimeout, err = writeTimeoutFromSettings(settings); err != nil {
 		return
 	}
+	if s.MaxResendQueueMessages, err = positiveIntSetting(settings, config.MaxResendQueueMessages, defaultMaxResendQueueMessages); err != nil {
+		return
+	}
+	if s.MaxResendQueueBytes, err = positiveIntSetting(settings, config.MaxResendQueueBytes, defaultMaxResendQueueBytes); err != nil {
+		return
+	}
 	if s.redactor, err = redactorFromSettings(settings); err != nil {
 		return
 	}
@@ -701,6 +707,28 @@ func redactorFromSettings(settings *SessionSettings) (*redactor, error) {
 		tags = append(tags, Tag(tag))
 	}
 	return newRedactor(tags), nil
+}
+
+// The defaults for MaxResendQueueMessages and MaxResendQueueBytes.
+const (
+	defaultMaxResendQueueMessages = 100_000
+	defaultMaxResendQueueBytes    = 64 << 20
+)
+
+// positiveIntSetting returns setting, which must be greater than zero, or
+// defaultValue if it is not set.
+func positiveIntSetting(settings *SessionSettings, setting string, defaultValue int) (int, error) {
+	if !settings.HasSetting(setting) {
+		return defaultValue, nil
+	}
+	value, err := settings.IntSetting(setting)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, errors.Errorf("%s must be greater than zero", setting)
+	}
+	return value, nil
 }
 
 // writeTimeoutFromSettings returns the SocketWriteTimeout setting, or the

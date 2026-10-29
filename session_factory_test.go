@@ -271,6 +271,29 @@ func (s *SessionFactorySuite) TestSocketWriteTimeout() {
 	}
 }
 
+func (s *SessionFactorySuite) TestMaxResendQueue() {
+	session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Require().NoError(err)
+	s.Equal(100_000, session.MaxResendQueueMessages)
+	s.Equal(64<<20, session.MaxResendQueueBytes)
+
+	s.SessionSettings.Set(config.MaxResendQueueMessages, "10")
+	s.SessionSettings.Set(config.MaxResendQueueBytes, "2048")
+	session, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Require().NoError(err)
+	s.Equal(10, session.MaxResendQueueMessages)
+	s.Equal(2048, session.MaxResendQueueBytes)
+
+	for _, setting := range []string{config.MaxResendQueueMessages, config.MaxResendQueueBytes} {
+		for _, value := range []string{"", "0", "-1", "a"} {
+			s.SetupTest()
+			s.SessionSettings.Set(setting, value)
+			_, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+			s.Error(err, "%s=%q", setting, value)
+		}
+	}
+}
+
 func (s *SessionFactorySuite) TestStartAndEndTime() {
 	s.SessionSettings.Set(config.StartTime, "12:00:00")
 	s.SessionSettings.Set(config.EndTime, "14:00:00")

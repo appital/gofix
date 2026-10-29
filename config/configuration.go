@@ -1116,6 +1116,26 @@ const (
 	//  - A positive integer
 	ResendRequestChunkSize string = "ResendRequestChunkSize"
 
+	// MaxResendQueueMessages and MaxResendQueueBytes bound the messages a
+	// session holds while it waits for a resend: those received with a
+	// MsgSeqNum above the gap it has asked the peer to fill, which it
+	// processes once the gap is filled. MaxResendQueueBytes counts the size
+	// of each message as received.
+	//
+	// Once either limit is reached, further messages above the gap are
+	// dropped, with a log event, rather than held. They are not lost: once
+	// the resend catches up, the next message is above the gap again, and
+	// the session sends another ResendRequest for them.
+	//
+	// Required: No
+	//
+	// Default: 100000 messages and 67108864 bytes (64 MiB)
+	//
+	// Valid Values:
+	//  - A positive integer
+	MaxResendQueueMessages string = "MaxResendQueueMessages"
+	MaxResendQueueBytes    string = "MaxResendQueueBytes"
+
 	// EnableLastMsgSeqNumProcessed tells the FIX engine to add the last message sequence number processed
 	// to outgoing message headers (using optional tag 369).
 	//
