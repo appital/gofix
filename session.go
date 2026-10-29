@@ -637,6 +637,14 @@ func (s *session) handleLogon(msg *Message) error {
 		return err
 	}
 
+	heartBtInt := s.HeartBtInt
+	if !s.InitiateLogon && !s.HeartBtIntOverride {
+		var err error
+		if heartBtInt, err = s.peerHeartBtInt(msg); err != nil {
+			return err
+		}
+	}
+
 	var resetSeqNumFlag FIXBoolean
 	if err := msg.Body.GetField(tagResetSeqNumFlag, &resetSeqNumFlag); err == nil {
 		if resetSeqNumFlag {
@@ -660,12 +668,7 @@ func (s *session) handleLogon(msg *Message) error {
 	}
 
 	if !s.InitiateLogon {
-		if !s.HeartBtIntOverride {
-			var heartBtInt FIXInt
-			if err := msg.Body.GetField(tagHeartBtInt, &heartBtInt); err == nil {
-				s.HeartBtInt = time.Duration(heartBtInt) * time.Second
-			}
-		}
+		s.HeartBtInt = heartBtInt
 
 		s.log.OnEvent("Responding to logon request")
 		if err := s.sendLogonInReplyTo(resetSeqNumFlag.Bool(), msg); err != nil {
@@ -699,6 +702,21 @@ func (s *session) handleLogon(msg *Message) error {
 	}
 
 	return s.store.IncrNextTargetMsgSeqNum()
+}
+
+// peerHeartBtInt returns the heartbeat interval a peer asks for in its Logon.
+// Zero, which FIX allows, turns heartbeats off; a negative value or one
+// above MaxHeartBtInt refuses the Logon.
+func (s *session) peerHeartBtInt(logon *Message) (time.Duration, error) {
+	var heartBtInt FIXInt
+	if err := logon.Body.GetField(tagHeartBtInt, &heartBtInt); err != nil {
+		return 0, logonRefused{fmt.Sprintf("Invalid HeartBtInt (%d): %v", tagHeartBtInt, err)}
+	}
+	if heartBtInt < 0 || time.Duration(heartBtInt) > s.MaxHeartBtInt/time.Second {
+		return 0, logonRefused{fmt.Sprintf("HeartBtInt (%d) must be between 0 and %d, got %d",
+			tagHeartBtInt, s.MaxHeartBtInt/time.Second, heartBtInt)}
+	}
+	return time.Duration(heartBtInt) * time.Second, nil
 }
 
 func (s *session) initiateLogout(reason string) (err error) {

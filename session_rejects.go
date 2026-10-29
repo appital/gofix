@@ -45,3 +45,11 @@ type targetTooLow struct {
 func (e targetTooLow) Error() string {
 	return fmt.Sprintf("MsgSeqNum too low, expecting %d but received %d", e.ExpectedTarget, e.ReceivedTarget)
 }
+
+// logonRefused is returned by handleLogon for a Logon the session will not
+// accept, which gets a Logout with the reason.
+type logonRefused struct {
+	reason string
+}
+
+func (e logonRefused) Error() string { return e.reason }

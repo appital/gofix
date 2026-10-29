@@ -222,6 +222,7 @@ func (s *SessionSuiteRig) Init() {
 	}
 	s.session.setApplication(&s.MockApp)
 	s.MaxLatency = 120 * time.Second
+	s.MaxHeartBtInt = defaultMaxHeartBtInt * time.Second
 }
 
 func (s *SessionSuiteRig) State(state sessionState) {

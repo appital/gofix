@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"bytes"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -406,6 +407,7 @@ func (s *LogonStateTestSuite) TestStayLoggedInOnReset() {
 
 	logon := s.Logon()
 	logon.Body.SetField(tagResetSeqNumFlag, FIXBoolean(true))
+	logon.Body.SetField(tagHeartBtInt, FIXInt(30))
 
 	s.MockApp.On("FromAdmin").Return(nil)
 	s.MockApp.On("OnLogon")
@@ -429,4 +431,88 @@ func (s *LogonStateTestSuite) TestStayLoggedInOnReset() {
 
 	s.NextTargetMsgSeqNum(2)
 	s.NextSenderMsgSeqNum(2)
+}
+
+// An acceptor refuses a Logon whose HeartBtInt is missing, negative, above
+// MaxHeartBtInt or does not parse, before it acts on it: it sends a Logout,
+// does not log on, reset the store or advance the target sequence number.
+func (s *LogonStateTestSuite) TestFixMsgInLogonInvalidHeartBtInt() {
+	tests := []struct {
+		name, heartBtInt, text string
+	}{
+		{"missing", "", "Invalid HeartBtInt (108): Conditionally Required Field Missing (108)"},
+		{"negative", "-1", "HeartBtInt (108) must be between 0 and 3600, got -1"},
+		{"above maximum", "3601", "HeartBtInt (108) must be between 0 and 3600, got 3601"},
+		{"overflows", "99999999999999999999", "Invalid HeartBtInt (108): Incorrect data format for value"},
+	}
+	for _, test := range tests {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			s.IncrNextSenderMsgSeqNum()
+			s.IncrNextTargetMsgSeqNum()
+			s.MockApp.On("FromAdmin").Return(nil)
+			s.MockApp.On("ToAdmin")
+
+			fields := []string{"98=0", "141=Y"}
+			if test.heartBtInt != "" {
+				fields = append(fields, "108="+test.heartBtInt)
+			}
+			logon := s.Logon()
+			logon.Header.SetInt(tagMsgSeqNum, 2)
+			s.session.Incoming(s.session, fixIn{bytes: withExtraFields(logon, fields...), receiveTime: time.Now()})
+
+			s.State(latentState{})
+			s.MockApp.AssertNotCalled(s.T(), "OnLogon")
+			s.NextTargetMsgSeqNum(2)
+			s.NextSenderMsgSeqNum(3)
+			s.MessageType(string(msgTypeLogout), s.MockApp.lastToAdmin)
+			s.FieldEquals(tagText, test.text, s.MockApp.lastToAdmin.Body)
+		})
+	}
+}
+
+// HeartBtInt 0 turns heartbeats off, rather than sending them continuously.
+func (s *LogonStateTestSuite) TestFixMsgInLogonHeartBtIntZero() {
+	var heartbeats, peerTimeouts atomic.Int32
+	s.session.stateTimer = internal.NewEventTimer(func() { heartbeats.Add(1) })
+	s.session.peerTimer = internal.NewEventTimer(func() { peerTimeouts.Add(1) })
+	defer s.session.stateTimer.Stop()
+	defer s.session.peerTimer.Stop()
+
+	s.IncrNextSenderMsgSeqNum()
+	s.MessageFactory.seqNum = 1
+	s.IncrNextTargetMsgSeqNum()
+	logon := s.Logon()
+	logon.Body.SetField(tagHeartBtInt, FIXInt(0))
+
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+	s.MockApp.On("ToAdmin")
+	s.fixMsgIn(s.session, logon)
+
+	s.State(inSession{})
+	s.Zero(s.session.HeartBtInt)
+	s.LastToAdminMessageSent()
+	s.FieldEquals(tagHeartBtInt, 0, s.MockApp.lastToAdmin.Body)
+
+	time.Sleep(50 * time.Millisecond)
+	s.Zero(heartbeats.Load())
+	s.Zero(peerTimeouts.Load())
+}
+
+func (s *LogonStateTestSuite) TestFixMsgInLogonMaxHeartBtInt() {
+	s.session.MaxHeartBtInt = 60 * time.Second
+	s.IncrNextSenderMsgSeqNum()
+	s.MessageFactory.seqNum = 1
+	s.IncrNextTargetMsgSeqNum()
+	logon := s.Logon()
+	logon.Body.SetField(tagHeartBtInt, FIXInt(60))
+
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+	s.MockApp.On("ToAdmin")
+	s.fixMsgIn(s.session, logon)
+
+	s.State(inSession{})
+	s.Equal(60*time.Second, s.session.HeartBtInt)
 }

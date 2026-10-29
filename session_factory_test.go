@@ -235,6 +235,23 @@ func (s *SessionFactorySuite) TestInvalidMaxMessageSize() {
 	}
 }
 
+func (s *SessionFactorySuite) TestMaxHeartBtInt() {
+	session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Require().NoError(err)
+	s.Equal(time.Hour, session.MaxHeartBtInt)
+
+	s.SessionSettings.Set(config.MaxHeartBtInt, "120")
+	session, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Require().NoError(err)
+	s.Equal(2*time.Minute, session.MaxHeartBtInt)
+
+	for _, setting := range []string{"", "0", "-1", "a"} {
+		s.SessionSettings.Set(config.MaxHeartBtInt, setting)
+		_, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+		s.Error(err, "MaxHeartBtInt=%q", setting)
+	}
+}
+
 func (s *SessionFactorySuite) TestStartAndEndTime() {
 	s.SessionSettings.Set(config.StartTime, "12:00:00")
 	s.SessionSettings.Set(config.EndTime, "14:00:00")
