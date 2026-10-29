@@ -289,7 +289,8 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 			a.globalLog.OnEventf("Connection Terminated with Panic: %s", debug.Stack())
 		}
 
-		if err := netConn.Close(); err != nil {
+		// writeLoop closes the connection itself if a write fails.
+		if err := netConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			a.globalLog.OnEvent(err.Error())
 		}
 	}()
@@ -460,7 +461,7 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 		readLoop(parser, msgIn, a.globalLog, session.metrics)
 	}()
 
-	writeLoop(netConn, msgOut, a.globalLog, session.MaxMessagesPerSecond, session.metrics, session.writerReady)
+	writeLoop(netConn, msgOut, a.globalLog, session.MaxMessagesPerSecond, session.WriteTimeout, session.metrics, session.writerReady)
 }
 
 func (a *Acceptor) dynamicSessionsLoop() {

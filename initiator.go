@@ -19,6 +19,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -223,8 +225,9 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 		go readLoop(newParserWithLimit(bufio.NewReader(netConn), session.MaxMessageSize), msgIn, session.log, session.metrics)
 		disconnected = make(chan any)
 		go func() {
-			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.metrics, session.writerReady)
-			if err := netConn.Close(); err != nil {
+			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.WriteTimeout, session.metrics, session.writerReady)
+			// writeLoop closes the connection itself if a write fails.
+			if err := netConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 				session.log.OnEvent(err.Error())
 			}
 			close(disconnected)

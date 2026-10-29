@@ -17,7 +17,9 @@ package gofix
 
 import (
 	"bufio"
+	"errors"
 	"io"
+	"net"
 	"runtime/debug"
 	"time"
 
@@ -32,16 +34,64 @@ const maxBurst = 1
 // writes it with a single flush.
 const messageOutCapacity = 64
 
+// defaultWriteTimeout bounds each write to a connection unless a session
+// sets SocketWriteTimeout.
+const defaultWriteTimeout = 30 * time.Second
+
+// writeDeadliner is the part of a net.Conn writeLoop uses to bound its writes.
+type writeDeadliner interface {
+	SetWriteDeadline(t time.Time) error
+}
+
 // writeLoop writes each message from messageOut to connection, calling ready,
 // if set, as it takes each one and recording each one to metrics. Messages
 // already waiting are written together and flushed once.
-func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, metrics Metrics, ready func()) {
+//
+// If connection has a write deadline, each write to it must finish within
+// writeTimeout, so that a peer that stops reading cannot block the loop. Once
+// a write fails, writeLoop closes connection, if it can be closed, which
+// ends the session's read loop and so disconnects the session. It then takes
+// and discards messages until messageOut is closed, so that the session is
+// never left waiting on a full messageOut.
+func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessagesPerSecond int, writeTimeout time.Duration, metrics Metrics, ready func()) {
 	limiter := rate.NewLimiter(rate.Limit(maxMessagesPerSecond), maxBurst)
 	w := bufio.NewWriter(connection)
 
+	deadliner, _ := connection.(writeDeadliner)
+	if writeTimeout <= 0 {
+		deadliner = nil
+	}
+
+	failed := false
+	fail := func(err error) {
+		log.OnEvent(err.Error())
+		failed = true
+		if closer, ok := connection.(io.Closer); ok {
+			if err := closer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.OnEvent(err.Error())
+			}
+		}
+	}
+
+	// setDeadline is called before each write that reaches connection.
+	setDeadline := func() {
+		if deadliner == nil {
+			return
+		}
+		if err := deadliner.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+			fail(err)
+		}
+	}
+
 	flush := func() {
+		if failed || w.Buffered() == 0 {
+			return
+		}
+		if setDeadline(); failed {
+			return
+		}
 		if err := w.Flush(); err != nil {
-			log.OnEvent(err.Error())
+			fail(err)
 		}
 	}
 
@@ -56,7 +106,7 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 				ready()
 			}
 
-			if maxMessagesPerSecond > 0 {
+			if maxMessagesPerSecond > 0 && !failed {
 				// Flush what is written before waiting for the limiter, so
 				// that earlier messages are not held back too.
 				if delay := limiter.Reserve().Delay(); delay > 0 {
@@ -65,10 +115,17 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 				}
 			}
 
-			metrics.MessageSent(len(msg))
+			// The bufio.Writer writes to connection only once msg does not
+			// fit in what is left of its buffer.
+			if !failed && len(msg) > w.Available() {
+				setDeadline()
+			}
 
-			if _, err := w.Write(msg); err != nil {
-				log.OnEvent(err.Error())
+			if !failed {
+				metrics.MessageSent(len(msg))
+				if _, err := w.Write(msg); err != nil {
+					fail(err)
+				}
 			}
 
 			select {

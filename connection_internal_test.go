@@ -17,11 +17,14 @@ package gofix
 
 import (
 	"bytes"
+	"io"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteLoop(t *testing.T) {
@@ -34,7 +37,7 @@ func TestWriteLoop(t *testing.T) {
 		msgOut <- []byte("test msg 3")
 		close(msgOut)
 	}()
-	writeLoop(writer, msgOut, nullLog{}, 0, nullMetrics{}, nil)
+	writeLoop(writer, msgOut, nullLog{}, 0, 0, nullMetrics{}, nil)
 
 	expected := "test msg 1 test msg 2 test msg 3"
 
@@ -147,7 +150,7 @@ func TestWriteLoopRateLimited(t *testing.T) {
 
 	w := &countingWriter{}
 	start := time.Now()
-	writeLoop(w, msgOut, nullLog{}, 20, nullMetrics{}, nil)
+	writeLoop(w, msgOut, nullLog{}, 20, 0, nullMetrics{}, nil)
 
 	assert.Equal(t, "abc", w.buf.String())
 	assert.Equal(t, 3, w.writes, "each paced message should be flushed before the next wait")
@@ -165,7 +168,7 @@ func TestWriteLoopBatches(t *testing.T) {
 
 	w := &countingWriter{}
 	readies := 0
-	writeLoop(w, msgOut, nullLog{}, 0, nullMetrics{}, func() { readies++ })
+	writeLoop(w, msgOut, nullLog{}, 0, 0, nullMetrics{}, func() { readies++ })
 
 	assert.Equal(t, "abc", w.buf.String())
 	assert.Equal(t, 1, w.writes, "waiting messages should go out in one write")
@@ -192,7 +195,7 @@ func TestLoopsRecordMetrics(t *testing.T) {
 	close(msgOut)
 
 	sent := &recordingMetrics{}
-	writeLoop(&countingWriter{}, msgOut, nullLog{}, 0, sent, nil)
+	writeLoop(&countingWriter{}, msgOut, nullLog{}, 0, 0, sent, nil)
 	assert.Equal(t, 3, sent.sentCount)
 	assert.Equal(t, 6, sent.sentBytes)
 
@@ -220,4 +223,71 @@ func (m *recordingMetrics) MessageSent(n int) {
 func (m *recordingMetrics) MessageReceived(n int) {
 	m.receivedCount++
 	m.receivedBytes += n
+}
+
+// A write to a peer that has stopped reading times out. The write loop then
+// closes the connection, and takes the messages the session still sends
+// without writing them until messageOut is closed, so that the session is
+// never left waiting on it.
+func TestWriteLoopTimesOutStalledWrite(t *testing.T) {
+	local, peer := net.Pipe() // Each write waits until peer reads it.
+	defer peer.Close()
+
+	log := &eventLog{}
+	msgOut := make(chan []byte)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writeLoop(local, msgOut, log, 0, 50*time.Millisecond, nullMetrics{}, nil)
+	}()
+
+	start := time.Now()
+	for range 1000 {
+		select {
+		case msgOut <- []byte("msg"):
+		case <-time.After(5 * time.Second):
+			t.Fatal("the write loop stopped taking messages")
+		}
+	}
+	assert.Less(t, time.Since(start), 5*time.Second)
+
+	// The peer sees the connection closed.
+	_, err := peer.Read(make([]byte, 1))
+	assert.ErrorIs(t, err, io.EOF)
+
+	close(msgOut)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write loop did not return once messageOut closed")
+	}
+	require.NotEmpty(t, log.events)
+	assert.Contains(t, log.events[0], "i/o timeout")
+	assert.Len(t, log.events, 1, "only the failed write is logged: %v", log.events)
+}
+
+// A write that finishes in time is not affected by the timeout, however long
+// the loop then waits for the next message.
+func TestWriteLoopTimeoutAllowsIdleConnection(t *testing.T) {
+	local, peer := net.Pipe()
+	defer peer.Close()
+
+	msgOut := make(chan []byte)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writeLoop(local, msgOut, nullLog{}, 0, 50*time.Millisecond, nullMetrics{}, nil)
+	}()
+
+	buf := make([]byte, 3)
+	for range 2 {
+		msgOut <- []byte("msg")
+		_, err := io.ReadFull(peer, buf)
+		require.NoError(t, err)
+		assert.Equal(t, "msg", string(buf))
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	close(msgOut)
+	<-done
 }

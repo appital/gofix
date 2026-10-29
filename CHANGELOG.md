@@ -12,6 +12,7 @@
 * An acceptor now answers a Logon whose HeartBtInt is missing, negative, does not parse or is above the new `MaxHeartBtInt` setting, which defaults to 3600 seconds, with a Logout and closes the connection, without advancing sequence numbers. A HeartBtInt of 0 now turns heartbeats and the peer timeout off, as FIX defines, where it used to make the session send heartbeats continuously. `HeartBtIntOverride` still ignores the peer's value
 
 ### FEATURES
+* Adds the `SocketWriteTimeout` session setting, how long a write to the connection may take before the connection is closed, default 30 seconds
 * Adds the `MaxHeartBtInt` acceptor setting, the largest HeartBtInt, in seconds, accepted in a peer's Logon, default 3600
 * Adds the `MaxMessageSize` session setting, the largest inbound message in bytes, default 1 MiB, and the `SocketReadTimeout` setting, how long an acceptor waits for the first message on a new connection, default 30 seconds
 * Adds the `RedactedTags` setting, the fields whose values are replaced with `***` in every message, and every event that includes a message, passed to the `Log`, including the acceptor's global log. It defaults to Password (554), NewPassword (925), EncryptedPassword (1402) and EncryptedNewPassword (1404), so these are no longer logged by default; set it empty to turn redaction off. Outbound admin messages, such as Logon, are also redacted before they are saved to the `MessageStore`. Application messages are saved as they are, because they may be resent
@@ -33,6 +34,7 @@
 * The write loop writes every message already waiting before flushing, through a buffered writer, so a backlog goes out in far fewer syscalls; the outbound channel holds up to 64 messages.
 
 ### BUG FIXES
+* A peer that stopped reading could leave its session waiting for ever to send once the connection's buffers filled, so the session stopped handling messages and timers, and `Acceptor.Stop` or `Initiator.Stop` never returned. A write that has waited `SocketWriteTimeout` now closes the connection and disconnects the session
 * Inbound parsing no longer lets a peer choose a frame boundary independently of BodyLength, and no longer lets a whole message of SOH bytes make the parser allocate many times its size. Every DATA field that has a length field in the FIX specifications, such as XMLData, RawData, EncodedText and EncryptedPassword, may now contain SOH without splitting the frame, including inside repeating groups. A malformed message is skipped and logged as "Invalid Message Skipped" with the reason and the number of bytes dropped, and bytes between messages, such as a line break, are ignored
 * A ResendRequest with a BeginSeqNo below 1 or a negative EndSeqNo is now rejected instead of being processed
 * With `DynamicSessions`, an acceptor now creates a session only if the CompIDs, SubIDs, LocationIDs and BeginString in the peer's Logon are made up of letters, digits, `.`, `_` and `-`, and are no longer than 64 bytes. The file store also refuses a SessionID that would name a file outside `FileStorePath`
