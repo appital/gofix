@@ -17,6 +17,8 @@ package gofix
 
 import (
 	"bytes"
+	"io"
+	"net"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -304,6 +306,55 @@ func BenchmarkSessionOutbound(b *testing.B) {
 				}
 				bs.session.dropQueued()
 			}
+		})
+	}
+}
+
+// BenchmarkWriteLoop measures the write loop sending messages over loopback
+// TCP to a peer that reads everything, with and without a write timeout, to
+// show what setting the connection's write deadline costs.
+func BenchmarkWriteLoop(b *testing.B) {
+	msg := []byte(wireMessage("8=FIX.4.4", "35=8", "49=TW", "56=ISLD", "34=1", "52=20260101-00:00:00.000",
+		"6=0", "11=ORDER1", "14=100", "17=EXEC1", "20=0", "31=101.25", "32=100", "37=ORD1", "38=100",
+		"39=2", "54=1", "55=MSFT", "150=F", "151=0"))
+
+	for _, timeout := range []time.Duration{0, defaultWriteTimeout} {
+		b.Run("timeout="+timeout.String(), func(b *testing.B) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer listener.Close()
+
+			go func() {
+				peer, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer peer.Close()
+				_, _ = io.Copy(io.Discard, peer)
+			}()
+
+			conn, err := net.Dial("tcp", listener.Addr().String())
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			msgOut := make(chan []byte, messageOutCapacity)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				writeLoop(conn, msgOut, nullLog{}, 0, timeout, nullMetrics{}, nil)
+			}()
+
+			b.SetBytes(int64(len(msg)))
+			b.ReportAllocs()
+			for b.Loop() {
+				msgOut <- msg
+			}
+			close(msgOut)
+			<-done
+			conn.Close()
 		})
 	}
 }

@@ -606,6 +606,21 @@ const (
 	//  - An integer number of seconds
 	SocketReadTimeout string = "SocketReadTimeout"
 
+	// SocketWriteTimeout is how long a write to the connection may take. A
+	// peer that stops reading makes writes wait once the connection's send
+	// buffers are full; when one has waited this long, the connection is
+	// closed and the session disconnected, rather than the session waiting
+	// for ever to send.
+	//
+	// Required: No
+	//
+	// Default: 30s
+	//
+	// Valid Values:
+	//  - A valid go time.Duration
+	//  - An integer number of seconds
+	SocketWriteTimeout string = "SocketWriteTimeout"
+
 	// ProxyType sets the type of proxy server to connect to.
 	// Only used for initiators.
 	//

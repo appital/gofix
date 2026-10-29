@@ -25,6 +25,7 @@ type SessionSettings struct {
 	ResetSeqTime                 time.Time
 	EnableResetSeqTime           bool
 	InChanCapacity               int
+	WriteTimeout                 time.Duration
 	ReuseIncomingMessages        bool
 
 	// Required on logon for FIXT.1.1 messages.

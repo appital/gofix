@@ -252,6 +252,25 @@ func (s *SessionFactorySuite) TestMaxHeartBtInt() {
 	}
 }
 
+func (s *SessionFactorySuite) TestSocketWriteTimeout() {
+	session, err := s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+	s.Require().NoError(err)
+	s.Equal(30*time.Second, session.WriteTimeout)
+
+	for setting, expected := range map[string]time.Duration{"5s": 5 * time.Second, "250ms": 250 * time.Millisecond, "10": 10 * time.Second} {
+		s.SessionSettings.Set(config.SocketWriteTimeout, setting)
+		session, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+		s.Require().NoError(err)
+		s.Equal(expected, session.WriteTimeout, "SocketWriteTimeout=%q", setting)
+	}
+
+	for _, setting := range []string{"", "0", "-1s", "a"} {
+		s.SessionSettings.Set(config.SocketWriteTimeout, setting)
+		_, err = s.newSession(s.SessionID, s.MessageStoreFactory, s.SessionSettings, s.LogFactory, s.App)
+		s.Error(err, "SocketWriteTimeout=%q", setting)
+	}
+}
+
 func (s *SessionFactorySuite) TestStartAndEndTime() {
 	s.SessionSettings.Set(config.StartTime, "12:00:00")
 	s.SessionSettings.Set(config.EndTime, "14:00:00")

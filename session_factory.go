@@ -145,6 +145,9 @@ func (f sessionFactory) newSession(
 	if err = f.buildMaxMessageSizeSettings(s, settings); err != nil {
 		return
 	}
+	if s.WriteTimeout, err = writeTimeoutFromSettings(settings); err != nil {
+		return
+	}
 	if s.redactor, err = redactorFromSettings(settings); err != nil {
 		return
 	}
@@ -698,6 +701,26 @@ func redactorFromSettings(settings *SessionSettings) (*redactor, error) {
 		tags = append(tags, Tag(tag))
 	}
 	return newRedactor(tags), nil
+}
+
+// writeTimeoutFromSettings returns the SocketWriteTimeout setting, or the
+// default if it is not set.
+func writeTimeoutFromSettings(settings *SessionSettings) (time.Duration, error) {
+	if !settings.HasSetting(config.SocketWriteTimeout) {
+		return defaultWriteTimeout, nil
+	}
+	timeout, err := settings.DurationSetting(config.SocketWriteTimeout)
+	if err != nil {
+		seconds, intErr := settings.IntSetting(config.SocketWriteTimeout)
+		if intErr != nil {
+			return 0, intErr
+		}
+		timeout = time.Duration(seconds) * time.Second
+	}
+	if timeout <= 0 {
+		return 0, errors.New("SocketWriteTimeout must be greater than zero")
+	}
+	return timeout, nil
 }
 
 func (f sessionFactory) buildSessionLogoutTimeoutSettings(session *session, settings *SessionSettings) error {

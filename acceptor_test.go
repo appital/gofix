@@ -596,3 +596,76 @@ func TestAcceptor_FirstMessageLimits(t *testing.T) {
 		assert.True(t, ok)
 	})
 }
+
+// A peer that logs on and then stops reading, while sending messages the
+// session must answer, is disconnected once a write has waited
+// SocketWriteTimeout, rather than leaving the session waiting for ever to
+// send; and the acceptor still stops.
+func TestAcceptor_DisconnectsPeerThatStopsReading(t *testing.T) {
+	sessionSettings := NewSessionSettings()
+	sessionSettings.Set(config.BeginString, BeginStringFIX42)
+	sessionSettings.Set(config.SenderCompID, "SERVER")
+	sessionSettings.Set(config.TargetCompID, "CLIENT")
+
+	settings := NewSettings()
+	settings.GlobalSettings().Set(config.SocketAcceptPort, "5005")
+	settings.GlobalSettings().Set(config.SocketWriteTimeout, "200ms")
+	_, err := settings.AddSession(sessionSettings)
+	require.NoError(t, err)
+
+	log := &textLog{}
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, textLogFactory{log}, WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+	require.NoError(t, acceptor.Start())
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			acceptor.Stop()
+		}
+	})
+
+	conn, err := net.Dial("tcp", "127.0.0.1:5005")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	// Shrink what the connection buffers for us, so the session's sends
+	// fill it quickly.
+	require.NoError(t, conn.(*net.TCPConn).SetReadBuffer(4096))
+
+	sendingTime := func() string { return "52=" + time.Now().UTC().Format("20060102-15:04:05.000") }
+	_, err = conn.Write([]byte(wireMessage("8=FIX.4.2", "35=A", "49=CLIENT", "56=SERVER", "34=1", sendingTime(), "98=0", "108=30")))
+	require.NoError(t, err)
+
+	// Each TestRequest is answered with a Heartbeat that echoes its
+	// TestReqID, which we never read.
+	testReqID := strings.Repeat("x", 64<<10)
+	sendErr := make(chan error, 1)
+	go func() {
+		for seqNum := 2; seqNum < 200; seqNum++ {
+			msg := wireMessage("8=FIX.4.2", "35=1", "49=CLIENT", "56=SERVER", "34="+strconv.Itoa(seqNum), sendingTime(), "112="+testReqID)
+			if _, err := conn.Write([]byte(msg)); err != nil {
+				sendErr <- err
+				return
+			}
+		}
+		sendErr <- nil
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(log.String(), "i/o timeout")
+	}, 10*time.Second, 10*time.Millisecond, "the session's writes never timed out:\n%s", log.String())
+	require.Eventually(t, func() bool {
+		return strings.Contains(log.String(), "Disconnected")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	stopDone := make(chan struct{})
+	go func() {
+		acceptor.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+		stopped = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("Acceptor.Stop did not return")
+	}
+}
