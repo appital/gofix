@@ -78,6 +78,10 @@ func (f sessionFactory) reg() *Registry {
 
 const shortForm = "15:04:05"
 
+// defaultMaxHeartBtInt is the largest HeartBtInt, in seconds, an acceptor
+// takes from a peer's Logon unless MaxHeartBtInt says otherwise.
+const defaultMaxHeartBtInt = 3600
+
 // Creates Session, associates with internal session registry.
 func (f sessionFactory) createSession(
 	sessionID SessionID, storeFactory MessageStoreFactory, settings *SessionSettings,
@@ -504,6 +508,10 @@ func (f sessionFactory) buildAcceptorSettings(session *session, settings *Sessio
 		return err
 	}
 
+	if err := f.buildMaxHeartBtIntSettings(session, settings); err != nil {
+		return err
+	}
+
 	if err := f.buildMaxMessagesPerSecondSettings(session, settings); err != nil {
 		return err
 	}
@@ -620,6 +628,21 @@ func (f sessionFactory) buildHeartBtIntSettings(session *session, settings *Sess
 		session.HeartBtInt = time.Duration(heartBtInt) * time.Second
 	}
 	return
+}
+
+func (f sessionFactory) buildMaxHeartBtIntSettings(session *session, settings *SessionSettings) error {
+	maxHeartBtInt := defaultMaxHeartBtInt
+	if settings.HasSetting(config.MaxHeartBtInt) {
+		var err error
+		if maxHeartBtInt, err = settings.IntSetting(config.MaxHeartBtInt); err != nil {
+			return err
+		}
+		if maxHeartBtInt <= 0 {
+			return errors.New("MaxHeartBtInt must be greater than zero")
+		}
+	}
+	session.MaxHeartBtInt = time.Duration(maxHeartBtInt) * time.Second
+	return nil
 }
 
 func (f sessionFactory) buildMaxMessagesPerSecondSettings(session *session, settings *SessionSettings) (err error) {

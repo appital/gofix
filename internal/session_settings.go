@@ -10,6 +10,7 @@ type SessionSettings struct {
 	ResetOnDisconnect            bool
 	HeartBtInt                   time.Duration
 	HeartBtIntOverride           bool
+	MaxHeartBtInt                time.Duration
 	MaxMessagesPerSecond         int
 	MaxMessageSize               int
 	SessionTime                  *TimeRange

@@ -51,11 +51,17 @@ func (t *EventTimer) Stop() {
 	t.wg.Wait()
 }
 
+// Reset arranges for the task to run after timeout, or stops the timer if
+// timeout is not positive.
 func (t *EventTimer) Reset(timeout time.Duration) {
 	if t == nil {
 		return
 	}
 
+	if timeout <= 0 {
+		t.timer.Stop()
+		return
+	}
 	t.timer.Reset(timeout)
 }
 

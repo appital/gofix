@@ -41,7 +41,7 @@ func (s logonState) FixMsgIn(session *session, msg *Message) (nextState sessionS
 		case RejectLogon:
 			return shutdownWithReason(session, msg, true, err.Error())
 
-		case targetTooLow:
+		case targetTooLow, logonRefused:
 			return shutdownWithReason(session, msg, false, err.Error())
 
 		case targetTooHigh:

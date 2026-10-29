@@ -703,6 +703,21 @@ const (
 	//  - N
 	HeartBtIntOverride string = "HeartBtIntOverride"
 
+	// MaxHeartBtInt is the largest heartbeat interval, in seconds, an acceptor
+	// accepts in a peer's Logon. A Logon with a larger HeartBtInt, a negative
+	// one, or none, gets a Logout and the connection is closed. A HeartBtInt
+	// of 0 turns heartbeats off for the session. Not used with
+	// HeartBtIntOverride.
+	// Used for acceptors only.
+	//
+	// Required: No
+	//
+	// Default: 3600
+	//
+	// Valid Values:
+	//  - A positive integer
+	MaxHeartBtInt string = "MaxHeartBtInt"
+
 	// UseTCPProxy if set to Y, use TCP proxy for servers listening behind HAProxy of Amazon ELB load balancers.
 	// The server can then receive the address of the client instead of the load balancer's.
 	// Every connection must open with a PROXY protocol header; connections without one are closed.
