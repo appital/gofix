@@ -141,6 +141,9 @@ func (f sessionFactory) newSession(
 	if err = f.buildMaxMessageSizeSettings(s, settings); err != nil {
 		return
 	}
+	if s.redactor, err = redactorFromSettings(settings); err != nil {
+		return
+	}
 	if sessionID.IsFIXT() {
 		if s.DefaultApplVerID, err = settings.Setting(config.DefaultApplVerID); err != nil {
 			return
@@ -476,6 +479,7 @@ func (f sessionFactory) newSession(
 	if s.log, err = logFactory.CreateSessionLog(s.sessionID); err != nil {
 		return
 	}
+	s.log = newRedactingLog(s.log, s.redactor)
 
 	if f.metricsFactory != nil {
 		s.metrics = f.metricsFactory.CreateSessionMetrics(s.sessionID)
@@ -645,6 +649,32 @@ func (f sessionFactory) buildMaxMessageSizeSettings(session *session, settings *
 	}
 
 	return
+}
+
+// redactorFromSettings returns a redactor for the RedactedTags setting, or the
+// default tags if it is not set.
+func redactorFromSettings(settings *SessionSettings) (*redactor, error) {
+	if !settings.HasSetting(config.RedactedTags) {
+		return newRedactor(defaultRedactedTags), nil
+	}
+	value, err := settings.Setting(config.RedactedTags)
+	if err != nil {
+		return nil, err
+	}
+
+	var tags []Tag
+	for field := range strings.SplitSeq(value, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		tag, err := strconv.Atoi(field)
+		if err != nil || tag <= 0 {
+			return nil, errors.Errorf("RedactedTags: invalid tag %q", field)
+		}
+		tags = append(tags, Tag(tag))
+	}
+	return newRedactor(tags), nil
 }
 
 func (f sessionFactory) buildSessionLogoutTimeoutSettings(session *session, settings *SessionSettings) error {

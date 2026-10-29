@@ -67,6 +67,10 @@ type session struct {
 
 	targetDefaultApplVerID string
 
+	// redactor masks credentials in messages before they are logged, and in
+	// admin messages before they are stored.
+	redactor *redactor
+
 	admin chan any
 	// done is closed when run returns, after which admin has no reader.
 	done chan struct{}
@@ -449,7 +453,8 @@ func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes
 		return
 	}
 
-	if isAdminMessageType(msgType) {
+	isAdmin := isAdminMessageType(msgType)
+	if isAdmin {
 		s.interceptor.ToAdmin(msg, s.sessionID)
 		if bytes.Equal(msgType, msgTypeLogon) {
 			var resetSeqNumFlag FIXBoolean
@@ -477,7 +482,13 @@ func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes
 
 	// Message converted to bytes here.
 	msgBytes = msg.build()
-	err = s.persist(seqNum, msgBytes)
+	if isAdmin {
+		// Admin messages are never resent, only gap filled, so the stored
+		// copy need not keep credentials.
+		err = s.persist(seqNum, s.redactor.redact(msgBytes))
+	} else {
+		err = s.persist(seqNum, msgBytes)
+	}
 
 	return
 }
