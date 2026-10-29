@@ -1160,4 +1160,26 @@ const (
 	//  - Y
 	//  - N
 	ReuseIncomingMessages string = "ReuseIncomingMessages"
+
+	// RedactedTags lists the fields, such as passwords, whose values are
+	// replaced with *** wherever gofix passes a message to the Log: inbound
+	// and outbound messages, and events that include a message. Outbound
+	// admin messages, such as Logon, are also redacted before they are saved
+	// to the MessageStore; application messages are saved as they are,
+	// because they may be resent.
+	//
+	// Redacting a data field also sets its length field to 3, and a redacted
+	// message keeps a correct BodyLength and CheckSum.
+	//
+	// The acceptor redacts its global log with the global value. An empty
+	// value turns redaction off.
+	//
+	// Required: No
+	//
+	// Default: 554,925,1402,1404 (Password, NewPassword, EncryptedPassword and
+	// EncryptedNewPassword)
+	//
+	// Valid Values:
+	//  - A comma-separated list of positive integers, or nothing
+	RedactedTags string = "RedactedTags"
 )

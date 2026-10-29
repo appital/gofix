@@ -244,6 +244,11 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 	if a.globalLog, err = logFactory.Create(); err != nil {
 		return
 	}
+	globalRedactor, err := redactorFromSettings(settings.GlobalSettings())
+	if err != nil {
+		return nil, err
+	}
+	a.globalLog = newRedactingLog(a.globalLog, globalRedactor)
 
 	for sessionID, sessionSettings := range settings.SessionSettings() {
 		sessID := sessionID

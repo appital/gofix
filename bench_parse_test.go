@@ -248,3 +248,20 @@ func reportPerField(b *testing.B, c *corpus) {
 	fieldsPerMsg := float64(c.totalFields) / float64(len(c.entries))
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/fieldsPerMsg, "ns/field")
 }
+
+// BenchmarkRedact measures what redacting costs each message logged to a Log
+// other than the null log, which for messages without credentials is only
+// the check for them.
+func BenchmarkRedact(b *testing.B) {
+	c := loadCorpus(b, tape.MixRealistic)
+	r := newRedactor(defaultRedactedTags)
+
+	forEachMsgType(b, c, func(b *testing.B, c *corpus) {
+		b.SetBytes(c.bytesPerMsg())
+		b.ReportAllocs()
+
+		for i := 0; b.Loop(); i++ {
+			sinkBytes = r.redact(c.wire[i%len(c.wire)])
+		}
+	})
+}
