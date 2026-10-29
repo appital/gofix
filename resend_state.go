@@ -19,9 +19,48 @@ import "github.com/appital/gofix/internal"
 
 type resendState struct {
 	loggedOn
-	messageStash          map[int]*Message
+	// messageStash holds the messages received above the gap being resent,
+	// by MsgSeqNum, to be processed once the resend catches up to them.
+	messageStash map[int]*Message
+	// stashBytes is the size of the messages in messageStash, and
+	// stashFull is set once one has been dropped because it was full.
+	stashBytes            int
+	stashFull             bool
 	currentResendRangeEnd int
 	resendRangeEnd        int
+}
+
+// stash holds msg, received with MsgSeqNum seqNum above the gap being resent,
+// unless MaxResendQueueMessages or MaxResendQueueBytes would be exceeded. A
+// message that is dropped is not lost: once the resend catches up, the next
+// message is too high again, and the session asks for the rest.
+func (s resendState) stash(session *session, seqNum int, msg *Message) (resendState, error) {
+	if s.messageStash == nil {
+		s.messageStash = make(map[int]*Message)
+	}
+
+	size := messageSize(msg)
+	held := s.messageStash[seqNum]
+	if held != nil {
+		size -= messageSize(held)
+	}
+	if held == nil && len(s.messageStash) >= session.MaxResendQueueMessages ||
+		s.stashBytes+size > session.MaxResendQueueBytes {
+		if !s.stashFull {
+			session.log.OnEventf("Resend queue full (%d messages, %d bytes); dropping MsgSeqNum %d until the resend catches up",
+				len(s.messageStash), s.stashBytes, seqNum)
+			s.stashFull = true
+		}
+		return s, nil
+	}
+
+	kept, err := session.retainIncoming(msg)
+	if err != nil {
+		return s, err
+	}
+	s.messageStash[seqNum] = kept
+	s.stashBytes += size
+	return s, nil
 }
 
 func (s resendState) String() string { return "Resend" }
@@ -46,13 +85,17 @@ func (s resendState) FixMsgIn(session *session, msg *Message) (nextState session
 	if !nextState.IsLoggedOn() {
 		return
 	}
+	// A message above the gap has been added to the stash.
+	if stashed, ok := nextState.(resendState); ok {
+		s = stashed
+	}
 
 	if s.currentResendRangeEnd != 0 && s.currentResendRangeEnd < session.store.NextTargetMsgSeqNum() {
 		nextResendState, err := session.sendResendRequest(session.store.NextTargetMsgSeqNum(), s.resendRangeEnd)
 		if err != nil {
 			return handleStateError(session, err)
 		}
-		nextResendState.messageStash = s.messageStash
+		nextResendState.messageStash, nextResendState.stashBytes, nextResendState.stashFull = s.messageStash, s.stashBytes, s.stashFull
 		return nextResendState
 	}
 
@@ -68,7 +111,7 @@ func (s resendState) FixMsgIn(session *session, msg *Message) (nextState session
 		if err != nil {
 			return handleStateError(session, err)
 		}
-		nextResendState.messageStash = s.messageStash
+		nextResendState.messageStash, nextResendState.stashBytes, nextResendState.stashFull = s.messageStash, s.stashBytes, s.stashFull
 		return nextResendState
 	}
 
@@ -92,4 +135,13 @@ func (s resendState) FixMsgIn(session *session, msg *Message) (nextState session
 	}
 
 	return
+}
+
+// messageSize is the size of msg as received, or as built if it was not
+// parsed from bytes.
+func messageSize(msg *Message) int {
+	if msg.rawMessage != nil {
+		return msg.rawMessage.Len()
+	}
+	return len(msg.String())
 }

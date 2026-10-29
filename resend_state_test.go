@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,4 +266,97 @@ func (s *resendStateTestSuite) TestFixMsgInReuseIncomingMessages() {
 	s.Equal([]int{1, 2, 3, 4}, app.seqNums)
 	s.State(inSession{})
 	s.NextTargetMsgSeqNum(5)
+}
+
+// Once MaxResendQueueMessages are held, further messages above the gap are
+// dropped rather than held. They are asked for again once the resend catches
+// up, so the application still gets every message, in order.
+func (s *resendStateTestSuite) TestFixMsgInResendQueueFull() {
+	log := &textLog{}
+	s.session.log = log
+	s.session.MaxResendQueueMessages = 2
+	s.session.State = inSession{}
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromApp").Return(nil)
+
+	// 2 opens a resend of 1. 2 and 3 are held; 4 and 5 are dropped.
+	s.MessageFactory.SetNextSeqNum(2)
+	for range 4 {
+		s.fixMsgIn(s.session, s.NewOrderSingle())
+		s.State(resendState{})
+	}
+	s.Len(s.session.State.(resendState).messageStash, 2)
+	s.Equal(1, strings.Count(log.String(), "Resend queue full"), log.String())
+	s.Contains(log.String(), "Resend queue full (2 messages")
+	s.Contains(log.String(), "dropping MsgSeqNum 4 ")
+
+	// The resend of 1 releases 2 and 3, then stops at the dropped 4.
+	s.MessageFactory.SetNextSeqNum(1)
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+	s.State(inSession{})
+	s.NextTargetMsgSeqNum(4)
+	s.MockApp.AssertNumberOfCalls(s.T(), "FromApp", 3)
+
+	// The next message is too high again, so 4 and 5 are asked for.
+	s.MessageFactory.SetNextSeqNum(6)
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+	s.State(resendState{})
+	s.MessageType(string(msgTypeResendRequest), s.MockApp.lastToAdmin)
+	s.FieldEquals(tagBeginSeqNo, 4, s.MockApp.lastToAdmin.Body)
+
+	s.MessageFactory.SetNextSeqNum(4)
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+	s.State(inSession{})
+	s.NextTargetMsgSeqNum(7)
+	s.MockApp.AssertNumberOfCalls(s.T(), "FromApp", 6)
+}
+
+// MaxResendQueueBytes bounds the size of the messages held.
+func (s *resendStateTestSuite) TestFixMsgInResendQueueBytesFull() {
+	log := &textLog{}
+	s.session.log = log
+	s.session.State = inSession{}
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromApp").Return(nil)
+
+	s.MessageFactory.SetNextSeqNum(2)
+	held := s.NewOrderSingle()
+	s.session.MaxResendQueueBytes = messageSize(held) + 10
+	s.fixMsgIn(s.session, held)
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+
+	state := s.session.State.(resendState)
+	s.Len(state.messageStash, 1)
+	s.Equal(messageSize(held), state.stashBytes)
+	s.Contains(log.String(), "dropping MsgSeqNum 3 ")
+
+	s.MessageFactory.SetNextSeqNum(1)
+	s.fixMsgIn(s.session, s.NewOrderSingle())
+	s.State(inSession{})
+	s.NextTargetMsgSeqNum(3)
+}
+
+// A message that repeats a MsgSeqNum already held replaces it, even when the
+// queue is full, and is counted once.
+func (s *resendStateTestSuite) TestFixMsgInResendQueueReplaces() {
+	log := &textLog{}
+	s.session.log = log
+	s.session.MaxResendQueueMessages = 1
+	s.session.State = inSession{}
+	s.MockApp.On("ToAdmin")
+
+	s.MessageFactory.SetNextSeqNum(2)
+	first := s.NewOrderSingle()
+	s.fixMsgIn(s.session, first)
+	s.MessageFactory.SetNextSeqNum(2)
+	second := s.NewOrderSingle()
+	second.Body.SetField(tagText, FIXString("again"))
+	s.fixMsgIn(s.session, second)
+
+	state := s.session.State.(resendState)
+	s.Len(state.messageStash, 1)
+	s.Same(second, state.messageStash[2])
+	s.Equal(messageSize(second), state.stashBytes)
+	s.NotContains(log.String(), "Resend queue full")
 }
