@@ -1,6 +1,6 @@
 module github.com/appital/gofix
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.52

@@ -1,6 +1,6 @@
 module github.com/appital/gofix/metrics/prometheus
 
-go 1.26.0
+go 1.26.10
 
 // Builds against the gofix module in this repository.
 replace github.com/appital/gofix => ../..
