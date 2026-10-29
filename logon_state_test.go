@@ -17,6 +17,8 @@ package gofix
 
 import (
 	"bytes"
+	"fmt"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -515,4 +517,153 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonMaxHeartBtInt() {
 
 	s.State(inSession{})
 	s.Equal(60*time.Second, s.session.HeartBtInt)
+}
+
+// sentMessages parses every message the session has sent so far.
+func (s *LogonStateTestSuite) sentMessages() []*Message {
+	var sent []*Message
+	for {
+		select {
+		case raw, ok := <-s.Receiver.sendChannel:
+			if !ok { // Closed when the session disconnects.
+				return sent
+			}
+			msg := NewMessage()
+			s.Require().NoError(ParseMessage(msg, bytes.NewBuffer(raw)))
+			sent = append(sent, msg)
+		default:
+			return sent
+		}
+	}
+}
+
+// describe summarises each sent message as its MsgType and MsgSeqNum, with
+// NewSeqNo for a SequenceReset and PossDupFlag where set.
+func describe(msgs []*Message) []string {
+	var out []string
+	for _, msg := range msgs {
+		msgType, _ := msg.Header.GetString(tagMsgType)
+		seqNum, _ := msg.Header.GetInt(tagMsgSeqNum)
+		d := fmt.Sprintf("%s:%d", msgType, seqNum)
+		if newSeqNo, err := msg.Body.GetInt(tagNewSeqNo); err == nil {
+			d += fmt.Sprintf(">%d", newSeqNo)
+		}
+		if possDup, err := msg.Header.GetBool(tagPossDupFlag); err == nil && possDup {
+			d += " dup"
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// storeSent stores messages of the given types as if sent before the Logon.
+func (s *LogonStateTestSuite) storeSent(msgTypes ...string) {
+	for _, msgType := range msgTypes {
+		msg := NewMessage()
+		msg.Header.SetField(tagMsgType, FIXString(msgType))
+		_, err := s.session.prepMessageForSend(msg, nil)
+		s.Require().NoError(err)
+	}
+}
+
+// receiveLogon has the session receive a Logon with NextExpectedMsgSeqNum
+// set to nextExpected.
+func (s *LogonStateTestSuite) receiveLogon(nextExpected int) {
+	s.MessageFactory.SetNextSeqNum(1)
+	logon := s.Logon()
+	logon.Body.SetField(tagHeartBtInt, FIXInt(30))
+	logon.Body.SetField(tagNextExpectedMsgSeqNum, FIXInt(nextExpected))
+	s.fixMsgIn(s.session, logon)
+}
+
+// A Logon whose NextExpectedMsgSeqNum is below our next MsgSeqNum asks for
+// the messages it missed, as a ResendRequest would: application messages are
+// resent, and admin messages gap filled, after our Logon.
+func (s *LogonStateTestSuite) TestFixMsgInLogonNextExpectedMsgSeqNumResends() {
+	s.session.EnableNextExpectedMsgSeqNum = true
+	s.MockApp.On("ToApp").Return(nil)
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+
+	s.storeSent("D", "D", "0", "D", "D") // 1 to 5
+	s.receiveLogon(2)
+
+	s.State(inSession{})
+	s.Equal([]string{"A:6", "D:2 dup", "4:3>4 dup", "D:4 dup", "D:5 dup"}, describe(s.sentMessages()))
+	s.NextSenderMsgSeqNum(7)
+	s.NextTargetMsgSeqNum(2)
+}
+
+// Without a store, the missed messages are gap filled.
+func (s *LogonStateTestSuite) TestFixMsgInLogonNextExpectedMsgSeqNumWithoutPersist() {
+	s.session.EnableNextExpectedMsgSeqNum = true
+	s.session.DisableMessagePersist = true
+	s.MockApp.On("ToApp").Return(nil)
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+
+	s.storeSent("D", "D", "D")
+	s.receiveLogon(2)
+
+	s.State(inSession{})
+	s.Equal([]string{"A:4", "4:2>4 dup"}, describe(s.sentMessages()))
+}
+
+// A Logon that expects our next MsgSeqNum needs nothing resent.
+func (s *LogonStateTestSuite) TestFixMsgInLogonNextExpectedMsgSeqNumCurrent() {
+	s.session.EnableNextExpectedMsgSeqNum = true
+	s.MockApp.On("ToApp").Return(nil)
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+
+	s.storeSent("D", "D")
+	s.receiveLogon(3)
+
+	s.State(inSession{})
+	s.Equal([]string{"A:3"}, describe(s.sentMessages()))
+}
+
+// A NextExpectedMsgSeqNum below 1, or above anything we have sent, refuses
+// the Logon before the session logs on.
+func (s *LogonStateTestSuite) TestFixMsgInLogonNextExpectedMsgSeqNumInvalid() {
+	for _, nextExpected := range []int{0, -1, 4} {
+		s.Run(strconv.Itoa(nextExpected), func() {
+			s.SetupTest()
+			s.session.EnableNextExpectedMsgSeqNum = true
+			s.MockApp.On("ToApp").Return(nil)
+			s.MockApp.On("ToAdmin")
+			s.MockApp.On("FromAdmin").Return(nil)
+
+			s.storeSent("D", "D")
+			s.receiveLogon(nextExpected)
+
+			s.State(latentState{})
+			s.MockApp.AssertNotCalled(s.T(), "OnLogon")
+			s.Equal([]string{"5:3"}, describe(s.sentMessages()))
+			s.FieldEquals(tagText, fmt.Sprintf("NextExpectedMsgSeqNum (789) must be between 1 and 3, got %d", nextExpected), s.MockApp.lastToAdmin.Body)
+			s.NextTargetMsgSeqNum(1)
+		})
+	}
+}
+
+// An initiator resends what the acceptor's Logon response says it missed,
+// including a gap fill for our own Logon if the acceptor expects that too.
+func (s *LogonStateTestSuite) TestFixMsgInLogonResponseNextExpectedMsgSeqNumResends() {
+	s.session.EnableNextExpectedMsgSeqNum = true
+	s.session.InitiateLogon = true
+	s.session.HeartBtInt = 30 * time.Second
+	s.MockApp.On("ToApp").Return(nil)
+	s.MockApp.On("ToAdmin")
+	s.MockApp.On("FromAdmin").Return(nil)
+	s.MockApp.On("OnLogon")
+
+	s.storeSent("D", "D", "A") // 3 is the Logon we sent.
+	s.receiveLogon(2)
+
+	s.State(inSession{})
+	s.Equal([]string{"D:2 dup", "4:3>4 dup"}, describe(s.sentMessages()))
+	s.NextSenderMsgSeqNum(4)
 }

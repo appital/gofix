@@ -298,31 +298,6 @@ func (s *session) sendLogonInReplyTo(setResetSeqNum bool, inReplyTo *Message) er
 	return nil
 }
 
-func (s *session) generateSequenceReset(beginSeqNo int, endSeqNo int, inReplyTo Message) (err error) {
-	sequenceReset := NewMessage()
-	s.fillDefaultHeader(sequenceReset, &inReplyTo)
-
-	sequenceReset.Header.SetField(tagMsgType, FIXString("4"))
-	sequenceReset.Header.SetField(tagMsgSeqNum, FIXInt(beginSeqNo))
-	sequenceReset.Header.SetField(tagPossDupFlag, FIXBoolean(true))
-	sequenceReset.Body.SetField(tagNewSeqNo, FIXInt(endSeqNo))
-	sequenceReset.Body.SetField(tagGapFillFlag, FIXBoolean(true))
-
-	var origSendingTime FIXString
-	if err := sequenceReset.Header.GetField(tagSendingTime, &origSendingTime); err == nil {
-		sequenceReset.Header.SetField(tagOrigSendingTime, origSendingTime)
-	}
-
-	s.interceptor.ToAdmin(sequenceReset, s.sessionID)
-
-	msgBytes := sequenceReset.build()
-
-	s.EnqueueBytesAndSend(msgBytes)
-	s.log.OnEventf("Sent SequenceReset TO: %v", endSeqNo)
-
-	return
-}
-
 func (s *session) buildLogout(reason string) *Message {
 	logout := NewMessage()
 	logout.Header.SetField(tagMsgType, FIXString("5"))
@@ -637,6 +612,16 @@ func (s *session) handleLogon(msg *Message) error {
 		return err
 	}
 
+	// With ResetOnLogon, the store is about to be reset, so what the peer
+	// expects no longer applies.
+	var nextExpected int
+	if !resetStore {
+		var err error
+		if nextExpected, err = s.nextExpectedMsgSeqNum(msg, nextSenderMsgNumAtLogonReceived); err != nil {
+			return err
+		}
+	}
+
 	heartBtInt := s.HeartBtInt
 	if !s.InitiateLogon && !s.HeartBtIntOverride {
 		var err error
@@ -680,20 +665,12 @@ func (s *session) handleLogon(msg *Message) error {
 	s.peerTimer.Reset(time.Duration(float64(1.2) * float64(s.HeartBtInt)))
 	s.sessionHandler.OnLogon(s.sessionID)
 
-	// Evaluate tag 789 to see if we end up with an implied gapfill/resend.
-	if s.EnableNextExpectedMsgSeqNum && !msg.Body.Has(tagResetSeqNumFlag) {
-		targetWantsNextSeqNumToBe, getErr := msg.Body.GetInt(tagNextExpectedMsgSeqNum)
-		if getErr == nil {
-			if targetWantsNextSeqNumToBe != nextSenderMsgNumAtLogonReceived {
-				if !s.DisableMessagePersist {
-					seqResetErr := s.generateSequenceReset(targetWantsNextSeqNumToBe, nextSenderMsgNumAtLogonReceived+1, *msg)
-					if seqResetErr != nil {
-						return seqResetErr
-					}
-				} else {
-					return targetTooHigh{ReceivedTarget: targetWantsNextSeqNumToBe, ExpectedTarget: nextSenderMsgNumAtLogonReceived}
-				}
-			}
+	// A NextExpectedMsgSeqNum below ours means the peer missed messages we
+	// sent before this Logon, which it is asking for as if by a ResendRequest.
+	if nextExpected > 0 && nextExpected < nextSenderMsgNumAtLogonReceived {
+		s.log.OnEventf("Logon NextExpectedMsgSeqNum %d is below %d, resending", nextExpected, nextSenderMsgNumAtLogonReceived)
+		if err := (inSession{}).resendMessages(s, nextExpected, nextSenderMsgNumAtLogonReceived-1, *msg); err != nil {
+			return err
 		}
 	}
 
@@ -702,6 +679,26 @@ func (s *session) handleLogon(msg *Message) error {
 	}
 
 	return s.store.IncrNextTargetMsgSeqNum()
+}
+
+// nextExpectedMsgSeqNum returns the NextExpectedMsgSeqNum in a peer's Logon,
+// with EnableNextExpectedMsgSeqNum and without ResetSeqNumFlag, or zero.
+// nextSender is our next MsgSeqNum when the Logon was received. The peer
+// cannot expect a message we have not sent, nor one below 1.
+func (s *session) nextExpectedMsgSeqNum(logon *Message, nextSender int) (int, error) {
+	if !s.EnableNextExpectedMsgSeqNum || logon.Body.Has(tagResetSeqNumFlag) || !logon.Body.Has(tagNextExpectedMsgSeqNum) {
+		return 0, nil
+	}
+
+	nextExpected, err := logon.Body.GetInt(tagNextExpectedMsgSeqNum)
+	if err != nil {
+		return 0, logonRefused{fmt.Sprintf("Invalid NextExpectedMsgSeqNum (%d): %v", tagNextExpectedMsgSeqNum, err)}
+	}
+	if nextExpected < 1 || nextExpected > nextSender {
+		return 0, logonRefused{fmt.Sprintf("NextExpectedMsgSeqNum (%d) must be between 1 and %d, got %d",
+			tagNextExpectedMsgSeqNum, nextSender, nextExpected)}
+	}
+	return nextExpected, nil
 }
 
 // peerHeartBtInt returns the heartbeat interval a peer asks for in its Logon.
