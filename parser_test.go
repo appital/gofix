@@ -30,7 +30,7 @@ import (
 // See BenchmarkParserReadMessage in bench_parse_test.go for the same measurement
 // over the realistic message corpus.
 func BenchmarkParser_ReadMessage(b *testing.B) {
-	stream := "8=FIXT.1.1\x019=111\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=234\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01\x01"
+	stream := "8=FIXT.1.1\x019=95\x0135=D\x0134=4\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=197\x018=FIXT.1.1\x019=95\x0135=D\x0134=5\x0149=TW\x0152=20140511-23:10:34\x0156=ISLD\x0111=ID\x0121=3\x0140=1\x0154=1\x0155=INTC\x0160=20140511-23:10:34\x0110=198\x01\x01"
 
 	p := newParser(&loopReader{data: []byte(stream)})
 

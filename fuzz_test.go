@@ -147,7 +147,9 @@ func FuzzBuildParseRoundTrip(f *testing.F) {
 				continue
 			}
 			tag, err := atoi(tagBytes)
-			if err != nil || tag <= 0 || Tag(tag).IsHeader() || Tag(tag).IsTrailer() {
+			// A length field must hold the length of the data field after
+			// it, which arbitrary values do not.
+			if err != nil || tag <= 0 || Tag(tag).IsHeader() || Tag(tag).IsTrailer() || dataTagFor(Tag(tag)) != 0 {
 				continue
 			}
 			msg.Body.SetBytes(Tag(tag), value)
