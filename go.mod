@@ -6,7 +6,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/pkg/errors v0.9.1
-	github.com/quagmt/udecimal v1.10.1
+	github.com/quagmt/udecimal v1.11.0
 	github.com/shopspring/decimal v1.5.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/net v0.61.0
