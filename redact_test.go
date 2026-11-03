@@ -90,6 +90,28 @@ func TestRedactLargeTags(t *testing.T) {
 	assert.Same(t, &other[0], &r.redact(other)[0])
 }
 
+// A length field too large for the message, whether or not it overflows an
+// int, is not used to find the end of the data field that follows it.
+func TestRedactOversizedDataLength(t *testing.T) {
+	r := newRedactor(defaultRedactedTags)
+
+	for _, length := range []string{
+		"9223372036854775807",  // math.MaxInt, so the data field's end overflows.
+		"9223372036854775808",  // Overflows an int to math.MinInt.
+		"18446744073709551616", // Overflows an int to 0.
+		"-1000",                // Negative, so before the start of the message.
+	} {
+		t.Run(length, func(t *testing.T) {
+			raw := wireMessage("8=FIX.4.4", "35=A", "95="+length, "96=x", "554="+testSecret)
+			expected := wireMessage("8=FIX.4.4", "35=A", "95="+length, "96=x", "554=***")
+
+			var redacted []byte
+			require.NotPanics(t, func() { redacted = r.redact([]byte(raw)) })
+			assert.Equal(t, expected, string(redacted))
+		})
+	}
+}
+
 func TestRedactLeavesOtherMessagesAlone(t *testing.T) {
 	r := newRedactor(defaultRedactedTags)
 

@@ -98,12 +98,14 @@ func (r *redactor) redact(msg []byte) []byte {
 			start += soh + 1
 			continue
 		}
-		tag, tagErr := parseUInt(msg[start : start+eq])
+		tag, tagErr := atoi(msg[start : start+eq])
 		valueStart := start + eq + 1
 
 		valueEnd := len(msg)
-		if dataTag != 0 && Tag(tag) == dataTag && valueStart+dataLen <= len(msg) &&
-			(valueStart+dataLen == len(msg) || msg[valueStart+dataLen] == '\001') {
+		// dataLen is never negative, so comparing it with what is left of msg,
+		// rather than adding it to valueStart, cannot overflow.
+		if dataTag != 0 && Tag(tag) == dataTag && dataLen <= len(msg)-valueStart &&
+			(dataLen == len(msg)-valueStart || msg[valueStart+dataLen] == '\001') {
 			valueEnd = valueStart + dataLen
 		} else if soh := bytes.IndexByte(msg[valueStart:], '\001'); soh >= 0 {
 			valueEnd = valueStart + soh
@@ -119,7 +121,7 @@ func (r *redactor) redact(msg []byte) []byte {
 		dataTag = 0
 		if tagErr == nil {
 			if next := dataTagFor(Tag(tag)); next != 0 {
-				if n, err := parseUInt(msg[valueStart:valueEnd]); err == nil {
+				if n, err := atoi(msg[valueStart:valueEnd]); err == nil && n >= 0 {
 					dataTag, dataLen, dataLenAt, dataLenEnd = next, n, valueStart, valueEnd
 				}
 			}
