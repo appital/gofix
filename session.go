@@ -581,6 +581,12 @@ func (s *session) sendResendRequest(beginSeq, endSeq int) (nextState resendState
 }
 
 func (s *session) handleLogon(msg *Message) error {
+	// Check that the Logon is addressed to this session and is fresh before
+	// acting on it, so that it cannot refresh or reset the store.
+	if err := s.checkHeader(msg); err != nil {
+		return err
+	}
+
 	// Grab default app ver id from fixt.1.1 logon.
 	if s.sessionID.BeginString == BeginStringFIXT11 {
 		var targetApplVerID FIXString
@@ -647,9 +653,9 @@ func (s *session) handleLogon(msg *Message) error {
 		}
 	}
 
-	// Verify seq num too high but dont check against app implementation since we just did that.
-	// Don't need to double check.
-	if err := s.verifyIgnoreSeqNumTooHigh(msg); err != nil {
+	// The header and the application have already checked the Logon. Too high
+	// is checked after logging on, so only too low is left.
+	if err := s.checkTargetTooLow(msg); err != nil {
 		return err
 	}
 
@@ -735,15 +741,37 @@ func (s *session) verify(msg *Message) MessageRejectError {
 	return s.verifySelect(msg, true, true, true)
 }
 
-func (s *session) verifyIgnoreSeqNumTooHigh(msg *Message) MessageRejectError {
-	return s.verifySelect(msg, false, true, false)
-}
-
 func (s *session) verifyIgnoreSeqNumTooHighOrLow(msg *Message) MessageRejectError {
 	return s.verifySelect(msg, false, false, true)
 }
 
 func (s *session) verifySelect(msg *Message, checkTooHigh bool, checkTooLow bool, checkAppImpl bool) MessageRejectError {
+	if reject := s.checkHeader(msg); reject != nil {
+		return reject
+	}
+
+	if checkTooLow {
+		if reject := s.checkTargetTooLow(msg); reject != nil {
+			return reject
+		}
+	}
+
+	if checkTooHigh {
+		if reject := s.checkTargetTooHigh(msg); reject != nil {
+			return reject
+		}
+	}
+
+	if checkAppImpl {
+		return s.verifyMsgAgainstAppImpl(msg)
+	}
+
+	return nil
+}
+
+// checkHeader checks a message's BeginString, CompIDs and, unless the session
+// is resending, its SendingTime.
+func (s *session) checkHeader(msg *Message) MessageRejectError {
 	if reject := s.checkBeginString(msg); reject != nil {
 		return reject
 	}
@@ -759,21 +787,6 @@ func (s *session) verifySelect(msg *Message, checkTooHigh bool, checkTooLow bool
 		if reject := s.checkSendingTime(msg); reject != nil {
 			return reject
 		}
-	}
-	if checkTooLow {
-		if reject := s.checkTargetTooLow(msg); reject != nil {
-			return reject
-		}
-	}
-
-	if checkTooHigh {
-		if reject := s.checkTargetTooHigh(msg); reject != nil {
-			return reject
-		}
-	}
-
-	if checkAppImpl {
-		return s.verifyMsgAgainstAppImpl(msg)
 	}
 
 	return nil

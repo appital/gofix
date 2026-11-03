@@ -602,3 +602,36 @@ func (s *InSessionTestSuite) TestFIXMsgInRejectsDuplicateAndMisplacedTags() {
 		})
 	}
 }
+
+// A Logon on an established session that fails the BeginString, CompID or
+// SendingTime checks logs the session out without resetting the store, even
+// with ResetSeqNumFlag=Y.
+func (s *InSessionTestSuite) TestFIXMsgInLogonHeaderChecksBeforeReset() {
+	for _, test := range logonFailingHeaderChecks {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			s.Require().NoError(s.MockStore.SetNextSenderMsgSeqNum(10))
+			s.Require().NoError(s.MockStore.SetNextTargetMsgSeqNum(10))
+			s.Require().NoError(s.MockStore.SaveMessage(5, []byte("history")))
+			s.MockApp.On("FromAdmin").Return(nil).Maybe()
+			s.MockApp.On("ToAdmin")
+
+			logon := s.Logon()
+			logon.Header.SetInt(tagMsgSeqNum, 10)
+			logon.Body.SetField(tagHeartBtInt, FIXInt(30))
+			logon.Body.SetField(tagResetSeqNumFlag, FIXBoolean(true))
+			test.modify(logon)
+			s.fixMsgIn(s.session, logon)
+
+			s.State(logoutState{})
+			s.MockApp.AssertNotCalled(s.T(), "FromAdmin")
+			s.MessageType(string(msgTypeLogout), s.MockApp.lastToAdmin)
+			s.FieldEquals(tagMsgSeqNum, 10, s.MockApp.lastToAdmin.Header)
+			s.NextTargetMsgSeqNum(10)
+			s.NextSenderMsgSeqNum(11)
+			history, err := s.MockStore.GetMessages(5, 5)
+			s.Require().NoError(err)
+			s.Equal([][]byte{[]byte("history")}, history)
+		})
+	}
+}
