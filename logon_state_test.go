@@ -667,3 +667,52 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonResponseNextExpectedMsgSeqNumRese
 	s.Equal([]string{"D:2 dup", "4:3>4 dup"}, describe(s.sentMessages()))
 	s.NextSenderMsgSeqNum(4)
 }
+
+// logonFailingHeaderChecks lists Logons that the BeginString, CompID and
+// SendingTime checks reject.
+var logonFailingHeaderChecks = []struct {
+	name   string
+	modify func(*Message)
+}{
+	{"wrong BeginString", func(m *Message) { m.Header.SetField(tagBeginString, FIXString(string(BeginStringFIX44))) }},
+	{"wrong SenderCompID", func(m *Message) { m.Header.SetField(tagSenderCompID, FIXString("EVIL")) }},
+	{"wrong TargetCompID", func(m *Message) { m.Header.SetField(tagTargetCompID, FIXString("EVIL")) }},
+	{"stale SendingTime", func(m *Message) {
+		m.Header.SetField(tagSendingTime, FIXUTCTimestamp{Time: time.Now().Add(-time.Hour)})
+	}},
+}
+
+// A Logon that fails the BeginString, CompID or SendingTime checks is refused
+// before the session acts on it: the application does not see it, and the
+// store is neither refreshed nor reset, even with ResetSeqNumFlag=Y.
+func (s *LogonStateTestSuite) TestFixMsgInLogonHeaderChecksBeforeReset() {
+	for _, test := range logonFailingHeaderChecks {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			s.session.RefreshOnLogon = true
+			s.Require().NoError(s.MockStore.SetNextSenderMsgSeqNum(10))
+			s.Require().NoError(s.MockStore.SetNextTargetMsgSeqNum(10))
+			s.Require().NoError(s.MockStore.SaveMessage(5, []byte("history")))
+			s.MockStore.On("Refresh").Return(nil).Maybe()
+			s.MockApp.On("FromAdmin").Return(nil).Maybe()
+			s.MockApp.On("ToAdmin").Maybe()
+
+			logon := s.Logon()
+			logon.Header.SetInt(tagMsgSeqNum, 10)
+			logon.Body.SetField(tagHeartBtInt, FIXInt(30))
+			logon.Body.SetField(tagResetSeqNumFlag, FIXBoolean(true))
+			test.modify(logon)
+			s.fixMsgIn(s.session, logon)
+
+			s.State(latentState{})
+			s.MockStore.AssertNotCalled(s.T(), "Refresh")
+			s.MockApp.AssertNotCalled(s.T(), "FromAdmin")
+			s.MockApp.AssertNotCalled(s.T(), "OnLogon")
+			s.NextTargetMsgSeqNum(10)
+			s.NextSenderMsgSeqNum(10)
+			history, err := s.MockStore.GetMessages(5, 5)
+			s.Require().NoError(err)
+			s.Equal([][]byte{[]byte("history")}, history)
+		})
+	}
+}

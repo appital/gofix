@@ -2,6 +2,7 @@
 
 ### BUG FIXES
 * A panic in an `Application` callback, `Log` or `Metrics` called by a session ended the process, taking every other session with it. The session now recovers it, logs it with its stack trace and disconnects; other sessions carry on
+* A Logon's BeginString, CompIDs and SendingTime are now checked before anything else is done with it. A Logon that failed them, but had `ResetSeqNumFlag=Y` or arrived with `ResetOnLogon` or `RefreshOnLogon` set, used to reset or refresh the store first, losing the sequence numbers and messages kept for resends. Such a Logon is also no longer passed to `FromAdmin`
 
 ## 0.4.0 (October 29, 2026)
 
