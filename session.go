@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1066,27 +1067,82 @@ func (s *session) run() {
 	}()
 
 	for !s.Stopped() {
-		select {
-
-		case msg := <-s.admin:
-			s.onAdmin(msg)
-
-		case <-s.messageEvent:
-			s.SendAppMessages(s)
-
-		case fixIn, ok := <-s.messageIn:
-			if !ok {
-				s.Disconnected(s)
-			} else {
-				s.Incoming(s, fixIn)
-			}
-
-		case evt := <-s.sessionEvent:
-			s.Timeout(s, evt)
-
-		case now := <-ticker.C:
-			s.CheckSessionTime(s, now)
-			s.CheckResetTime(s, now)
-		}
+		s.runOnce(ticker.C)
 	}
+}
+
+// runOnce handles one event for run. Application callbacks, logs and metrics
+// all run here, and nothing above this goroutine recovers, so a panic in any
+// of them is recovered here and disconnects only this session.
+func (s *session) runOnce(tick <-chan time.Time) {
+	defer s.recoverPanic()
+
+	select {
+
+	case msg := <-s.admin:
+		s.onAdmin(msg)
+
+	case <-s.messageEvent:
+		s.SendAppMessages(s)
+
+	case fixIn, ok := <-s.messageIn:
+		if !ok {
+			s.Disconnected(s)
+		} else {
+			s.Incoming(s, fixIn)
+		}
+
+	case evt := <-s.sessionEvent:
+		s.Timeout(s, evt)
+
+	case now := <-tick:
+		s.CheckSessionTime(s, now)
+		s.CheckResetTime(s, now)
+	}
+}
+
+// recoverPanic recovers a panic in runOnce, logs it and disconnects the
+// session. It must be deferred directly.
+func (s *session) recoverPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	// The log may panic too, for example if it is what panicked first.
+	defer func() {
+		if r := recover(); r != nil {
+			s.disconnectAfterPanic()
+		}
+	}()
+
+	s.log.OnEventf("Session panic, disconnecting: %v\n%s", r, debug.Stack())
+	s.disconnectAfterPanic()
+}
+
+// disconnectAfterPanic leaves the session disconnected, and stopped if a stop
+// was requested, whatever state the panic left it in. OnLogout and the log
+// may panic again, so if the usual disconnect does not finish the connection
+// is closed directly.
+func (s *session) disconnectAfterPanic() {
+	if !s.IsConnected() && !s.stateMachine.pendingStop {
+		return
+	}
+
+	defer func() {
+		if recover() == nil {
+			return
+		}
+		if s.messageOut != nil {
+			close(s.messageOut)
+			s.messageOut = nil
+		}
+		s.messageIn = nil
+		s.stateMachine.State = latentState{}
+		if s.stateMachine.pendingStop {
+			s.stateMachine.stopped = true
+		}
+	}()
+
+	s.stateMachine.setState(s, latentState{})
 }

@@ -1,3 +1,8 @@
+## Unreleased
+
+### BUG FIXES
+* A panic in an `Application` callback, `Log` or `Metrics` called by a session ended the process, taking every other session with it. The session now recovers it, logs it with its stack trace and disconnects; other sessions carry on
+
 ## 0.4.0 (October 29, 2026)
 
 ### BREAKING CHANGES
