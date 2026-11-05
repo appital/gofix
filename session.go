@@ -38,6 +38,9 @@ type session struct {
 
 	messageOut chan<- []byte
 	messageIn  <-chan fixIn
+	// messageInDone is closed on disconnect to stop the read loop sending to
+	// messageIn.
+	messageInDone chan<- struct{}
 
 	// Application messages are queued up for send here.
 	toSend [][]byte
@@ -156,18 +159,22 @@ func (s *session) TargetDefaultApplicationVersionID() string {
 }
 
 type connect struct {
-	messageOut chan<- []byte
-	messageIn  <-chan fixIn
-	err        chan<- error
+	messageOut    chan<- []byte
+	messageIn     <-chan fixIn
+	messageInDone chan<- struct{}
+	err           chan<- error
 }
 
-func (s *session) connect(msgIn <-chan fixIn, msgOut chan<- []byte) error {
+// connect connects the session to a connection's channels. If it succeeds, the
+// session closes msgInDone once it disconnects and stops reading msgIn.
+func (s *session) connect(msgIn <-chan fixIn, msgInDone chan<- struct{}, msgOut chan<- []byte) error {
 	rep := make(chan error)
 	select {
 	case s.admin <- connect{
-		messageOut: msgOut,
-		messageIn:  msgIn,
-		err:        rep,
+		messageOut:    msgOut,
+		messageIn:     msgIn,
+		messageInDone: msgInDone,
+		err:           rep,
 	}:
 	case <-s.done:
 		return errSessionStopped
@@ -1006,15 +1013,26 @@ func (s *session) onDisconnect() {
 		}
 	}
 
-	if s.messageOut != nil {
-		close(s.messageOut)
-		s.messageOut = nil
-	}
+	s.closeConnection()
 
 	// s.messageIn is buffered so we need to drain it before disconnection
 	s.drainMessageIn()
 
 	s.messageIn = nil
+}
+
+// closeConnection closes messageOut, which ends the write loop and so closes
+// the connection, and messageInDone, which stops the read loop sending to
+// messageIn. Messages already in messageIn can still be read.
+func (s *session) closeConnection() {
+	if s.messageOut != nil {
+		close(s.messageOut)
+		s.messageOut = nil
+	}
+	if s.messageInDone != nil {
+		close(s.messageInDone)
+		s.messageInDone = nil
+	}
 }
 
 func (s *session) onAdmin(msg any) {
@@ -1044,6 +1062,7 @@ func (s *session) onAdmin(msg any) {
 		}
 
 		s.messageIn = msg.messageIn
+		s.messageInDone = msg.messageInDone
 		s.messageOut = msg.messageOut
 		s.sentReset = false
 
@@ -1163,10 +1182,7 @@ func (s *session) disconnectAfterPanic() {
 		if recover() == nil {
 			return
 		}
-		if s.messageOut != nil {
-			close(s.messageOut)
-			s.messageOut = nil
-		}
+		s.closeConnection()
 		s.messageIn = nil
 		s.stateMachine.State = latentState{}
 		if s.stateMachine.pendingStop {

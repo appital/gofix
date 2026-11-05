@@ -446,9 +446,10 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 
 	a.sessionAddr.Store(sessID, netConn.RemoteAddr())
 	msgIn := make(chan fixIn, session.InChanCapacity)
+	msgInDone := make(chan struct{})
 	msgOut := make(chan []byte, messageOutCapacity)
 
-	if err := session.connect(msgIn, msgOut); err != nil {
+	if err := session.connect(msgIn, msgInDone, msgOut); err != nil {
 		a.globalLog.OnEventf("Unable to accept session %v connection: %v", sessID, err.Error())
 		return
 	}
@@ -457,8 +458,11 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 	unwatch()
 
 	go func() {
-		msgIn <- fixIn{bytes: msgBytes, receiveTime: parser.lastRead, pooled: true}
-		readLoop(parser, msgIn, a.globalLog, session.metrics)
+		if !sendMessageIn(msgIn, msgInDone, fixIn{bytes: msgBytes, receiveTime: parser.lastRead, pooled: true}) {
+			close(msgIn)
+			return
+		}
+		readLoop(parser, msgIn, msgInDone, a.globalLog, session.metrics)
 	}()
 
 	writeLoop(netConn, msgOut, a.globalLog, session.MaxMessagesPerSecond, session.WriteTimeout, session.metrics, session.writerReady)
