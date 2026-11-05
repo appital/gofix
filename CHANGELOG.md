@@ -2,11 +2,14 @@
 
 ### BREAKING CHANGES
 * A Logon that is refused, because `FromAdmin` returned `RejectLogon` or because its HeartBtInt or NextExpectedMsgSeqNum is invalid, no longer changes the session's state. The Logout sent in reply carries the next sender MsgSeqNum but is not saved to the `MessageStore`, and neither the sender nor the target sequence number advances; both used to, after `RejectLogon`. This applies to an initiator rejecting a Logon response too. A Logon whose MsgSeqNum is too low is still answered with a persisted Logout
+* An initiator's TLS handshake now times out after `SocketTimeout`, or 30 seconds if it is not set, closing the connection and reconnecting after `ReconnectInterval`. It used to wait for ever for a server that never completed the handshake. Set `SocketTimeout=0` for no timeout
 
 ### BUG FIXES
 * A panic in an `Application` callback, `Log` or `Metrics` called by a session ended the process, taking every other session with it. The session now recovers it, logs it with its stack trace and disconnects; other sessions carry on
 * A Logon's BeginString, CompIDs and SendingTime are now checked before anything else is done with it. A Logon that failed them, but had `ResetSeqNumFlag=Y` or arrived with `ResetOnLogon` or `RefreshOnLogon` set, used to reset or refresh the store first, losing the sequence numbers and messages kept for resends. Such a Logon is also no longer passed to `FromAdmin`
 * A connection's read loop could be left waiting for ever, holding its goroutine and buffers, when the session disconnected while the peer was still sending messages. The read loop now stops once the session disconnects
+* An initiator left its connection open when the TLS handshake failed, or when the session could not be connected to it, until it was garbage collected. It now closes it. `Initiator.Stop` also no longer waits for a TLS handshake in progress to finish
+* With several `SocketConnectHost`s and no `SocketServerName` set, an initiator verified every server's TLS certificate against the first host it connected to, so it could not fail over to a host with its own certificate. Each connection is now verified against the host it was made to, and an IPv6 address is used without its brackets
 
 ## 0.4.0 (October 29, 2026)
 

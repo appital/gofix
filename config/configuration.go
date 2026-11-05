@@ -578,8 +578,10 @@ const (
 	//  - A positive integer
 	SocketConnectPort string = "SocketConnectPort"
 
-	// SocketTimeout sets the duration of timeout for TLS handshake.
-	// Only used for initiators.
+	// SocketTimeout is how long an initiator may take to open a connection, and
+	// separately how long it may take to complete the TLS handshake on it. A
+	// connection that is not ready in time is closed and retried after
+	// ReconnectInterval. Only used for initiators.
 	//
 	// Example Values:
 	//  - SocketTimeout=30s # 30 seconds
@@ -587,10 +589,12 @@ const (
 	//
 	// Required: No
 	//
-	// Default: 0 (no timeout)
+	// Default: no timeout when opening the connection beyond the operating
+	// system's own, and 30 seconds for the TLS handshake. Set to 0 for no
+	// timeout on either.
 	//
 	// Valid Values:
-	//  - A valid go time.Duration
+	//  - A valid go time.Duration, or a whole number of seconds
 	SocketTimeout string = "SocketTimeout"
 
 	// SocketReadTimeout is how long the acceptor waits for the first message

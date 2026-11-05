@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -58,8 +57,13 @@ func (i *Initiator) Start() (err error) {
 			return
 		}
 
+		var handshakeTimeout time.Duration
+		if handshakeTimeout, err = loadTLSHandshakeTimeout(settings); err != nil {
+			return
+		}
+
 		i.wg.Go(func() {
-			i.handleConnection(i.sessions[sessionID], tlsConfig, dialer)
+			i.handleConnection(i.sessions[sessionID], tlsConfig, dialer, handshakeTimeout)
 		})
 	}
 	return
@@ -155,7 +159,88 @@ func (i *Initiator) waitForReconnectInterval(reconnectInterval time.Duration) bo
 	return true
 }
 
-func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, dialer proxy.ContextDialer) {
+// sessionConn is a connection an initiator has connected a session to, with
+// the channels the session uses to send and receive on it.
+type sessionConn struct {
+	net.Conn
+	msgIn     chan fixIn
+	msgInDone chan struct{}
+	msgOut    chan []byte
+}
+
+// connectSession dials address, completes a TLS handshake within
+// handshakeTimeout if tlsConfig is set, and connects session to the
+// connection. If any step fails it logs why to the session log, closes the
+// connection if one was dialed, and returns nil. Cancelling ctx abandons a dial
+// or handshake in progress.
+func connectSession(ctx context.Context, session *session, dialer proxy.ContextDialer, address string, tlsConfig *tls.Config, handshakeTimeout time.Duration) *sessionConn {
+	netConn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		session.log.OnEventf("Failed to connect: %v", err)
+		return nil
+	}
+
+	closeConn := func() {
+		if err := netConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			session.log.OnEvent(err.Error())
+		}
+	}
+
+	if tlsConfig != nil {
+		tlsConn, err := clientHandshake(ctx, netConn, address, tlsConfig, handshakeTimeout)
+		if err != nil {
+			session.log.OnEventf("Failed handshake: %v", err)
+			closeConn()
+			return nil
+		}
+		netConn = tlsConn
+	}
+
+	conn := &sessionConn{
+		Conn:      netConn,
+		msgIn:     make(chan fixIn, session.InChanCapacity),
+		msgInDone: make(chan struct{}),
+		msgOut:    make(chan []byte, messageOutCapacity),
+	}
+	if err := session.connect(conn.msgIn, conn.msgInDone, conn.msgOut); err != nil {
+		session.log.OnEventf("Failed to initiate: %v", err)
+		closeConn()
+		return nil
+	}
+
+	return conn
+}
+
+// clientHandshake performs a TLS client handshake over netConn, which was
+// dialed to address, giving up after timeout if it is positive. Unless
+// tlsConfig skips verification or names a server, the server's certificate is
+// verified against the host in address.
+func clientHandshake(ctx context.Context, netConn net.Conn, address string, tlsConfig *tls.Config, timeout time.Duration) (*tls.Conn, error) {
+	// tlsConfig is shared by every attempt, which may dial different
+	// addresses, so the server name is set on a copy.
+	if !tlsConfig.InsecureSkipVerify && tlsConfig.ServerName == "" {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		tlsConfig = tlsConfig.Clone()
+		tlsConfig.ServerName = host
+	}
+
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	tlsConn := tls.Client(netConn, tlsConfig)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, dialer proxy.ContextDialer, handshakeTimeout time.Duration) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		session.run()
@@ -187,49 +272,21 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 		}()
 
 		var disconnected chan any
-		var msgIn chan fixIn
-		var msgInDone chan struct{}
-		var msgOut chan []byte
 
 		address := session.SocketConnectAddress[connectionAttempt%len(session.SocketConnectAddress)]
 		session.log.OnEventf("Connecting to: %v", address)
 
-		netConn, err := dialer.DialContext(ctx, "tcp", address)
-		if err != nil {
-			session.log.OnEventf("Failed to connect: %v", err)
-			goto reconnect
-		} else if tlsConfig != nil {
-			// Unless InsecureSkipVerify is true, server name config is required for TLS
-			// to verify the received certificate
-			if !tlsConfig.InsecureSkipVerify && len(tlsConfig.ServerName) == 0 {
-				serverName := address
-				if c := strings.LastIndex(serverName, ":"); c > 0 {
-					serverName = serverName[:c]
-				}
-				tlsConfig.ServerName = serverName
-			}
-			tlsConn := tls.Client(netConn, tlsConfig)
-			if err = tlsConn.Handshake(); err != nil {
-				session.log.OnEventf("Failed handshake: %v", err)
-				goto reconnect
-			}
-			netConn = tlsConn
-		}
-
-		msgIn = make(chan fixIn, session.InChanCapacity)
-		msgInDone = make(chan struct{})
-		msgOut = make(chan []byte, messageOutCapacity)
-		if err := session.connect(msgIn, msgInDone, msgOut); err != nil {
-			session.log.OnEventf("Failed to initiate: %v", err)
+		conn := connectSession(ctx, session, dialer, address, tlsConfig, handshakeTimeout)
+		if conn == nil {
 			goto reconnect
 		}
 
-		go readLoop(newParserWithLimit(bufio.NewReader(netConn), session.MaxMessageSize), msgIn, msgInDone, session.log, session.metrics)
+		go readLoop(newParserWithLimit(bufio.NewReader(conn), session.MaxMessageSize), conn.msgIn, conn.msgInDone, session.log, session.metrics)
 		disconnected = make(chan any)
 		go func() {
-			writeLoop(netConn, msgOut, session.log, session.MaxMessagesPerSecond, session.WriteTimeout, session.metrics, session.writerReady)
+			writeLoop(conn, conn.msgOut, session.log, session.MaxMessagesPerSecond, session.WriteTimeout, session.metrics, session.writerReady)
 			// writeLoop closes the connection itself if a write fails.
-			if err := netConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 				session.log.OnEvent(err.Error())
 			}
 			close(disconnected)
