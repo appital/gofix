@@ -38,16 +38,16 @@ func (s logonState) FixMsgIn(session *session, msg *Message) (nextState sessionS
 
 	if err := session.handleLogon(msg); err != nil {
 		switch err := err.(type) {
-		case RejectLogon:
-			return shutdownWithReason(session, msg, true, err.Error())
+		case RejectLogon, logonRefused:
+			return refuseLogon(session, msg, err.Error())
 
-		case targetTooLow, logonRefused:
-			return shutdownWithReason(session, msg, false, err.Error())
+		case targetTooLow:
+			return shutdownWithReason(session, msg, err.Error())
 
 		case targetTooHigh:
 			var tooHighErr error
 			if nextState, tooHighErr = session.doTargetTooHigh(err); tooHighErr != nil {
-				return shutdownWithReason(session, msg, false, tooHighErr.Error())
+				return shutdownWithReason(session, msg, tooHighErr.Error())
 			}
 
 			return
@@ -72,7 +72,7 @@ func (s logonState) Stop(_ *session) (nextState sessionState) {
 	return latentState{}
 }
 
-func shutdownWithReason(session *session, msg *Message, incrNextTargetMsgSeqNum bool, reason string) (nextState sessionState) {
+func shutdownWithReason(session *session, msg *Message, reason string) (nextState sessionState) {
 	session.log.OnEvent(reason)
 	logout := session.buildLogout(reason)
 
@@ -80,11 +80,16 @@ func shutdownWithReason(session *session, msg *Message, incrNextTargetMsgSeqNum 
 		session.logError(err)
 	}
 
-	if incrNextTargetMsgSeqNum {
-		if err := session.store.IncrNextTargetMsgSeqNum(); err != nil {
-			session.logError(err)
-		}
-	}
+	return latentState{}
+}
+
+// refuseLogon answers a Logon that was refused, by the application or because
+// it is invalid, with a Logout and disconnects. Until the Logon is accepted,
+// the peer has not shown it is the counterparty, so the Logout is not
+// persisted and neither sequence number advances.
+func refuseLogon(session *session, msg *Message, reason string) (nextState sessionState) {
+	session.log.OnEvent(reason)
+	session.dropUnpersistedAndSendInReplyTo(session.buildLogout(reason), msg)
 
 	return latentState{}
 }
