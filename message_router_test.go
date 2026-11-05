@@ -18,7 +18,10 @@ package gofix
 import (
 	"bytes"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -202,4 +205,81 @@ func (suite *MessageRouterTestSuite) TestRouteFIXTAppWithDefaultApplVerID() {
 	rej := suite.Route(suite.msg, suite.sessionID)
 	suite.verifyMessageRoutedBy(ApplVerIDFIX50SP1, "D")
 	suite.Nil(rej)
+}
+
+func newFIX42NewOrderSingle(tb testing.TB) *Message {
+	tb.Helper()
+	msg := NewMessage()
+	raw := "8=FIX.4.2\x019=87\x0135=D\x0149=TW\x0134=3\x0156=ISLD\x0152=20160421-14:43:50\x0140=1\x0160=20160421-14:43:50\x0154=1\x0121=3\x0111=id\x0110=235\x01"
+	if err := ParseMessage(msg, bytes.NewBufferString(withValidCheckSum(raw))); err != nil {
+		tb.Fatal(err)
+	}
+	return msg
+}
+
+// Routes may be added while sessions route messages. Run with -race.
+func TestMessageRouterAddRouteWhileRouting(t *testing.T) {
+	router := NewMessageRouter(WithRegistry(NewRegistry()))
+	var routed atomic.Int64
+	router.AddRoute(BeginStringFIX42, "D", func(*Message, SessionID) MessageRejectError {
+		routed.Add(1)
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for range 4 {
+		msg := newFIX42NewOrderSingle(t)
+		wg.Go(func() {
+			for range 1000 {
+				if rej := router.Route(msg, SessionID{}); rej != nil {
+					t.Errorf("unexpected reject: %v", rej)
+					return
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		for i := range 1000 {
+			router.AddRoute(BeginStringFIX42, fmt.Sprintf("U%d", i), func(*Message, SessionID) MessageRejectError { return nil })
+		}
+	})
+	wg.Wait()
+
+	if got := routed.Load(); got != 4000 {
+		t.Errorf("routed %d messages, want 4000", got)
+	}
+}
+
+// A route runs without the router's lock held, so it may add routes itself.
+func TestMessageRouterRouteMayAddRoute(t *testing.T) {
+	router := NewMessageRouter(WithRegistry(NewRegistry()))
+	router.AddRoute(BeginStringFIX42, "D", func(*Message, SessionID) MessageRejectError {
+		router.AddRoute(BeginStringFIX42, "F", func(*Message, SessionID) MessageRejectError { return nil })
+		return nil
+	})
+
+	done := make(chan MessageRejectError, 1)
+	go func() { done <- router.Route(newFIX42NewOrderSingle(t), SessionID{}) }()
+
+	select {
+	case rej := <-done:
+		if rej != nil {
+			t.Errorf("unexpected reject: %v", rej)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Route did not return; the route's AddRoute deadlocked")
+	}
+}
+
+func BenchmarkMessageRouterRoute(b *testing.B) {
+	router := NewMessageRouter(WithRegistry(NewRegistry()))
+	router.AddRoute(BeginStringFIX42, "D", func(*Message, SessionID) MessageRejectError { return nil })
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		msg := newFIX42NewOrderSingle(b)
+		for pb.Next() {
+			_ = router.Route(msg, SessionID{})
+		}
+	})
 }
