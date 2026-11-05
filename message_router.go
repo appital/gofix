@@ -15,6 +15,12 @@
 
 package gofix
 
+import (
+	"maps"
+	"sync"
+	"sync/atomic"
+)
+
 type routeKey struct {
 	FIXVersion string
 	MsgType    string
@@ -37,10 +43,15 @@ const (
 // A MessageRoute is a function that can process a fromApp/fromAdmin callback.
 type MessageRoute func(msg *Message, sessionID SessionID) MessageRejectError
 
-// A MessageRouter is a mutex for MessageRoutes. It implements Application, so it
-// can be passed directly to NewAcceptor or NewInitiator.
+// A MessageRouter is a multiplexer for MessageRoutes. It implements
+// Application, so it can be passed directly to NewAcceptor or NewInitiator.
+// It is safe for concurrent use: routes may be added while sessions are
+// routing messages. A MessageRouter must not be copied after first use.
 type MessageRouter struct {
-	routes   map[routeKey]MessageRoute
+	// routes is replaced, never changed, so that routing reads it without a
+	// lock. addMu serialises the replacements.
+	routes   atomic.Pointer[map[routeKey]MessageRoute]
+	addMu    sync.Mutex
 	registry *Registry
 }
 
@@ -50,16 +61,25 @@ var _ Application = (*MessageRouter)(nil)
 // router serves sessions registered in a Registry other than the DefaultRegistry.
 func NewMessageRouter(opts ...Option) *MessageRouter {
 	o := newOptions(opts)
-	return &MessageRouter{routes: make(map[routeKey]MessageRoute), registry: o.registry}
+	return &MessageRouter{registry: o.registry}
 }
 
-// AddRoute adds a route to the MessageRouter instance keyed to begin string and msgType.
-func (c MessageRouter) AddRoute(beginString string, msgType string, router MessageRoute) {
-	c.routes[routeKey{beginString, msgType}] = router
+// AddRoute adds a route to the MessageRouter instance keyed to begin string and msgType,
+// replacing any route already added for them.
+func (c *MessageRouter) AddRoute(beginString string, msgType string, router MessageRoute) {
+	c.addMu.Lock()
+	defer c.addMu.Unlock()
+
+	routes := make(map[routeKey]MessageRoute)
+	if old := c.routes.Load(); old != nil {
+		routes = maps.Clone(*old)
+	}
+	routes[routeKey{beginString, msgType}] = router
+	c.routes.Store(&routes)
 }
 
 // Route may be called from the fromApp/fromAdmin callbacks. Messages that cannot be routed will be rejected with UnsupportedMessageType.
-func (c MessageRouter) Route(msg *Message, sessionID SessionID) MessageRejectError {
+func (c *MessageRouter) Route(msg *Message, sessionID SessionID) MessageRejectError {
 	beginString, err := msg.Header.GetBytes(tagBeginString)
 	if err != nil {
 		return nil
@@ -75,11 +95,11 @@ func (c MessageRouter) Route(msg *Message, sessionID SessionID) MessageRejectErr
 
 // FromApp routes an application message received from the counterparty. It
 // makes MessageRouter an Application.
-func (c MessageRouter) FromApp(msg *Message, sessionID SessionID) MessageRejectError {
+func (c *MessageRouter) FromApp(msg *Message, sessionID SessionID) MessageRejectError {
 	return c.Route(msg, sessionID)
 }
 
-func (c MessageRouter) tryRoute(beginString string, msgType string, msg *Message, sessionID SessionID) MessageRejectError {
+func (c *MessageRouter) tryRoute(beginString string, msgType string, msg *Message, sessionID SessionID) MessageRejectError {
 	fixVersion := beginString
 	isAdminMsg := isAdminMessageType([]byte(msgType))
 
@@ -111,8 +131,10 @@ func (c MessageRouter) tryRoute(beginString string, msgType string, msg *Message
 		}
 	}
 
-	if route, ok := c.routes[routeKey{fixVersion, msgType}]; ok {
-		return route(msg, sessionID)
+	if routes := c.routes.Load(); routes != nil {
+		if route, ok := (*routes)[routeKey{fixVersion, msgType}]; ok {
+			return route(msg, sessionID)
+		}
 	}
 
 	switch {
