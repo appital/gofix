@@ -51,7 +51,7 @@ func TestReadLoop(t *testing.T) {
 	stream := "hello8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
 
 	parser := newParser(strings.NewReader(stream))
-	go readLoop(parser, msgIn, nullLog{}, nullMetrics{})
+	go readLoop(parser, msgIn, nil, nullLog{}, nullMetrics{})
 
 	var tests = []struct {
 		expectedMsg   string
@@ -78,6 +78,29 @@ func TestReadLoop(t *testing.T) {
 	}
 }
 
+// A read loop blocked sending to a full msgIn must stop once done is closed,
+// or it leaks when the session disconnects and stops reading msgIn.
+func TestReadLoopStopsWhenDone(t *testing.T) {
+	msgIn := make(chan fixIn, 1)
+	done := make(chan struct{})
+	stream := strings.Repeat("8=FIX.4.0\x019=5\x01blah\x0110=103\x01", 100)
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		readLoop(newParser(strings.NewReader(stream)), msgIn, done, nullLog{}, nullMetrics{})
+	}()
+
+	require.Eventually(t, func() bool { return len(msgIn) == 1 }, time.Second, time.Millisecond)
+	close(done)
+
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("readLoop did not stop after done was closed")
+	}
+}
+
 type panicReader struct{}
 
 func (panicReader) Read([]byte) (int, error) { panic("read failed") }
@@ -87,7 +110,7 @@ func TestReadLoopRecoversPanic(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		readLoop(newParser(panicReader{}), msgIn, nullLog{}, nullMetrics{})
+		readLoop(newParser(panicReader{}), msgIn, nil, nullLog{}, nullMetrics{})
 	}()
 
 	_, ok := <-msgIn
@@ -202,7 +225,7 @@ func TestLoopsRecordMetrics(t *testing.T) {
 	msgIn := make(chan fixIn)
 	received := &recordingMetrics{}
 	stream := "8=FIX.4.0\x019=5\x01blah\x0110=103\x018=FIX.4.0\x019=4\x01foo\x0110=103\x01"
-	go readLoop(newParser(strings.NewReader(stream)), msgIn, nullLog{}, received)
+	go readLoop(newParser(strings.NewReader(stream)), msgIn, nil, nullLog{}, received)
 	for range msgIn { //nolint:revive // drain the channel until readLoop closes it.
 	}
 	assert.Equal(t, 2, received.receivedCount)

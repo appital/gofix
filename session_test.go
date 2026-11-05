@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -799,6 +800,35 @@ func (s *SessionSuite) TestResetOnDisconnect() {
 	s.session.ResetOnDisconnect = true
 	s.session.onDisconnect()
 	s.ExpectStoreReset()
+}
+
+// A peer that pipelines messages can leave the read loop blocked sending to a
+// full messageIn when the session disconnects. Draining frees a slot but does
+// not empty the stream, so unless the session tells the read loop to stop it
+// blocks again on the abandoned channel and never returns.
+func (s *SessionSuite) TestOnDisconnectStopsReadLoop() {
+	msgIn := make(chan fixIn, 1)
+	msgInDone := make(chan struct{})
+	stream := strings.Repeat("8=FIX.4.0\x019=5\x01blah\x0110=103\x01", 100)
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		readLoop(newParser(strings.NewReader(stream)), msgIn, msgInDone, nullLog{}, nullMetrics{})
+	}()
+	s.Require().Eventually(func() bool { return len(msgIn) == 1 }, time.Second, time.Millisecond)
+
+	s.session.messageIn = msgIn
+	s.session.messageInDone = msgInDone
+	s.session.onDisconnect()
+
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		s.Fail("read loop still running after disconnect")
+	}
+	s.Nil(s.session.messageIn)
+	s.Nil(s.session.messageInDone)
 }
 
 type SessionSendTestSuite struct {

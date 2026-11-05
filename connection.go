@@ -145,7 +145,11 @@ func writeLoop(connection io.Writer, messageOut chan []byte, log Log, maxMessage
 	}
 }
 
-func readLoop(parser *parser, msgIn chan fixIn, log Log, metrics Metrics) {
+// readLoop reads messages from parser and sends each one to msgIn, closing
+// msgIn when it stops. It stops when a read fails or when done is closed. The
+// session closes done when it disconnects and stops reading msgIn, so that
+// readLoop is never left waiting forever to send to a full msgIn.
+func readLoop(parser *parser, msgIn chan fixIn, done <-chan struct{}, log Log, metrics Metrics) {
 	defer close(msgIn)
 	parser.log = log
 
@@ -166,6 +170,23 @@ func readLoop(parser *parser, msgIn chan fixIn, log Log, metrics Metrics) {
 
 		metrics.MessageReceived(msg.Len())
 
-		msgIn <- fixIn{bytes: msg, receiveTime: parser.lastRead, pooled: true}
+		if !sendMessageIn(msgIn, done, fixIn{bytes: msg, receiveTime: parser.lastRead, pooled: true}) {
+			return
+		}
+	}
+}
+
+// sendMessageIn sends in to msgIn unless done is closed first, and reports
+// whether it was sent. A message that is not sent is released, since nothing
+// else holds it.
+func sendMessageIn(msgIn chan<- fixIn, done <-chan struct{}, in fixIn) bool {
+	select {
+	case msgIn <- in:
+		return true
+	case <-done:
+		if in.pooled {
+			releaseRawBuffer(in.bytes)
+		}
+		return false
 	}
 }
