@@ -90,3 +90,27 @@ func (s *DialerTestSuite) TestLoadDialerSocksProxyInvalidPort() {
 	_, err := loadDialerConfig(s.settings.GlobalSettings())
 	s.Require().NotNil(err)
 }
+
+func (s *DialerTestSuite) TestLoadTLSHandshakeTimeoutDefault() {
+	timeout, err := loadTLSHandshakeTimeout(s.settings.GlobalSettings())
+	s.Require().NoError(err)
+	s.Equal(defaultTLSHandshakeTimeout, timeout)
+}
+
+func (s *DialerTestSuite) TestLoadTLSHandshakeTimeoutFromSocketTimeout() {
+	s.settings.GlobalSettings().Set(config.SocketTimeout, "10s")
+	timeout, err := loadTLSHandshakeTimeout(s.settings.GlobalSettings())
+	s.Require().NoError(err)
+	s.Equal(10*time.Second, timeout)
+
+	s.settings.GlobalSettings().Set(config.SocketTimeout, "5")
+	timeout, err = loadTLSHandshakeTimeout(s.settings.GlobalSettings())
+	s.Require().NoError(err)
+	s.Equal(5*time.Second, timeout)
+}
+
+func (s *DialerTestSuite) TestLoadTLSHandshakeTimeoutInvalid() {
+	s.settings.GlobalSettings().Set(config.SocketTimeout, "soon")
+	_, err := loadTLSHandshakeTimeout(s.settings.GlobalSettings())
+	s.Error(err)
+}

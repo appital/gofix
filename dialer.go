@@ -25,20 +25,40 @@ import (
 	"github.com/appital/gofix/config"
 )
 
+// defaultTLSHandshakeTimeout bounds an initiator's TLS handshake unless a
+// session sets SocketTimeout.
+const defaultTLSHandshakeTimeout = 30 * time.Second
+
+// loadSocketTimeout returns the SocketTimeout setting, a duration or a whole
+// number of seconds, or 0 if it is not set.
+func loadSocketTimeout(settings *SessionSettings) (time.Duration, error) {
+	if !settings.HasSetting(config.SocketTimeout) {
+		return 0, nil
+	}
+	timeout, err := settings.DurationSetting(config.SocketTimeout)
+	if err != nil {
+		timeoutInt, err := settings.IntSetting(config.SocketTimeout)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(timeoutInt) * time.Second, nil
+	}
+	return timeout, nil
+}
+
+// loadTLSHandshakeTimeout returns how long an initiator's TLS handshake may
+// take: SocketTimeout if it is set, and defaultTLSHandshakeTimeout otherwise.
+func loadTLSHandshakeTimeout(settings *SessionSettings) (time.Duration, error) {
+	if !settings.HasSetting(config.SocketTimeout) {
+		return defaultTLSHandshakeTimeout, nil
+	}
+	return loadSocketTimeout(settings)
+}
+
 func loadDialerConfig(settings *SessionSettings) (dialer proxy.ContextDialer, err error) {
 	stdDialer := &net.Dialer{}
-	if settings.HasSetting(config.SocketTimeout) {
-		timeout, err := settings.DurationSetting(config.SocketTimeout)
-		if err != nil {
-			timeoutInt, err := settings.IntSetting(config.SocketTimeout)
-			if err != nil {
-				return stdDialer, err
-			}
-
-			stdDialer.Timeout = time.Duration(timeoutInt) * time.Second
-		} else {
-			stdDialer.Timeout = timeout
-		}
+	if stdDialer.Timeout, err = loadSocketTimeout(settings); err != nil {
+		return stdDialer, err
 	}
 	dialer = stdDialer
 
