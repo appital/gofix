@@ -246,8 +246,11 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonInitiateLogonRejectedSeqNumNotRes
 	s.MockApp.AssertExpectations(s.T())
 	s.State(latentState{})
 
-	s.NextTargetMsgSeqNum(2)
-	s.NextSenderMsgSeqNum(3)
+	// The rejected response neither advances the sequence numbers nor
+	// persists the Logout.
+	s.NextTargetMsgSeqNum(1)
+	s.NextSenderMsgSeqNum(2)
+	s.NoMessagePersisted(2)
 }
 
 func (s *LogonStateTestSuite) TestFixMsgInLogonInitiateLogonUnExpectedResetSeqNum() {
@@ -330,9 +333,36 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonRejectLogon() {
 	s.LastToAdminMessageSent()
 	s.MessageType(string(msgTypeLogout), s.MockApp.lastToAdmin)
 	s.FieldEquals(tagText, "reject message", s.MockApp.lastToAdmin.Body)
+	s.FieldEquals(tagMsgSeqNum, 2, s.MockApp.lastToAdmin.Header)
 
-	s.NextTargetMsgSeqNum(3)
-	s.NextSenderMsgSeqNum(3)
+	// A rejected Logon leaves the session's state as it was.
+	s.NextTargetMsgSeqNum(2)
+	s.NextSenderMsgSeqNum(2)
+	s.NoMessagePersisted(2)
+}
+
+// However many Logons the application rejects, the sequence numbers do not
+// move and nothing is added to the store.
+func (s *LogonStateTestSuite) TestFixMsgInLogonRejectLogonRepeated() {
+	s.Require().NoError(s.MockStore.SetNextSenderMsgSeqNum(10))
+	s.Require().NoError(s.MockStore.SetNextTargetMsgSeqNum(10))
+	s.MockApp.On("FromAdmin").Return(RejectLogon{"bad password"})
+	s.MockApp.On("ToAdmin")
+
+	for range 5 {
+		s.session.stateMachine.State = logonState{}
+		logon := s.Logon()
+		logon.Header.SetInt(tagMsgSeqNum, 10)
+		logon.Body.SetField(tagHeartBtInt, FIXInt(30))
+		s.fixMsgIn(s.session, logon)
+
+		s.State(latentState{})
+		s.FieldEquals(tagMsgSeqNum, 10, s.MockApp.lastToAdmin.Header)
+	}
+
+	s.NextTargetMsgSeqNum(10)
+	s.NextSenderMsgSeqNum(10)
+	s.NoMessagePersisted(10)
 }
 
 func (s *LogonStateTestSuite) TestFixMsgInLogonSeqNumTooHigh() {
@@ -437,7 +467,8 @@ func (s *LogonStateTestSuite) TestStayLoggedInOnReset() {
 
 // An acceptor refuses a Logon whose HeartBtInt is missing, negative, above
 // MaxHeartBtInt or does not parse, before it acts on it: it sends a Logout,
-// does not log on, reset the store or advance the target sequence number.
+// does not log on, reset the store, persist the Logout or advance either
+// sequence number.
 func (s *LogonStateTestSuite) TestFixMsgInLogonInvalidHeartBtInt() {
 	tests := []struct {
 		name, heartBtInt, text string
@@ -466,7 +497,8 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonInvalidHeartBtInt() {
 			s.State(latentState{})
 			s.MockApp.AssertNotCalled(s.T(), "OnLogon")
 			s.NextTargetMsgSeqNum(2)
-			s.NextSenderMsgSeqNum(3)
+			s.NextSenderMsgSeqNum(2)
+			s.NoMessagePersisted(2)
 			s.MessageType(string(msgTypeLogout), s.MockApp.lastToAdmin)
 			s.FieldEquals(tagText, test.text, s.MockApp.lastToAdmin.Body)
 		})
@@ -645,6 +677,8 @@ func (s *LogonStateTestSuite) TestFixMsgInLogonNextExpectedMsgSeqNumInvalid() {
 			s.Equal([]string{"5:3"}, describe(s.sentMessages()))
 			s.FieldEquals(tagText, fmt.Sprintf("NextExpectedMsgSeqNum (789) must be between 1 and 3, got %d", nextExpected), s.MockApp.lastToAdmin.Body)
 			s.NextTargetMsgSeqNum(1)
+			s.NextSenderMsgSeqNum(3)
+			s.NoMessagePersisted(3)
 		})
 	}
 }

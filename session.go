@@ -419,6 +419,23 @@ func (s *session) dropAndSendInReplyTo(msg *Message, inReplyTo *Message) error {
 	return nil
 }
 
+// dropUnpersistedAndSendInReplyTo drops the send queue and sends msg, an admin
+// message, with the next sender MsgSeqNum. Unlike dropAndSendInReplyTo, it
+// neither persists msg nor advances the sequence number, so that the message
+// leaves the session's state as it was.
+func (s *session) dropUnpersistedAndSendInReplyTo(msg *Message, inReplyTo *Message) {
+	s.sendMutex.Lock()
+	defer s.sendMutex.Unlock()
+
+	s.fillDefaultHeader(msg, inReplyTo)
+	msg.Header.SetField(tagMsgSeqNum, FIXInt(s.store.NextSenderMsgSeqNum()))
+	s.interceptor.ToAdmin(msg, s.sessionID)
+
+	s.dropQueued()
+	s.toSend = append(s.toSend, msg.build())
+	s.sendQueued(true)
+}
+
 func (s *session) prepMessageForSend(msg *Message, inReplyTo *Message) (msgBytes []byte, err error) {
 	s.fillDefaultHeader(msg, inReplyTo)
 	seqNum := s.store.NextSenderMsgSeqNum()
