@@ -1,4 +1,4 @@
-## Unreleased
+## 0.5.0 (November 8, 2026)
 
 ### BREAKING CHANGES
 * A Logon that is refused, because `FromAdmin` returned `RejectLogon` or because its HeartBtInt or NextExpectedMsgSeqNum is invalid, no longer changes the session's state. The Logout sent in reply carries the next sender MsgSeqNum but is not saved to the `MessageStore`, and neither the sender nor the target sequence number advances; both used to, after `RejectLogon`. This applies to an initiator rejecting a Logon response too. A Logon whose MsgSeqNum is too low is still answered with a persisted Logout
@@ -25,6 +25,11 @@
 * With several `SocketConnectHost`s and no `SocketServerName` set, an initiator verified every server's TLS certificate against the first host it connected to, so it could not fail over to a host with its own certificate. Each connection is now verified against the host it was made to, and an IPv6 address is used without its brackets
 * Adding a route to a `MessageRouter` while sessions were routing messages through it was a data race, and could end the process with `concurrent map read and map write`. `MessageRouter` is now safe for concurrent use, and routing through it takes no lock
 * An `Acceptor.Start` that failed left the listeners it had already opened listening, and an `Initiator.Start` that failed on one session's settings left the sessions before it connecting. A `Run` that fails to start now leaves nothing running, and may be retried
+
+## 0.4.1 (November 3, 2026)
+
+### BUG FIXES
+* Redacting a message for the `Log` could panic when a length field before a redacted DATA field, such as EncryptedPasswordLen (1401), held a negative or very large value. Such a length is now ignored and the field is redacted up to the next SOH
 
 ## 0.4.0 (October 29, 2026)
 
