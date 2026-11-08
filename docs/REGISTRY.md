@@ -19,6 +19,8 @@ To keep an engine's sessions separate, create a registry with
 package main
 
 import (
+	"context"
+
 	"github.com/appital/gofix"
 	"github.com/appital/gofix/log/screen"
 )
@@ -39,7 +41,7 @@ func (a *app) FromApp(msg *gofix.Message, sessionID gofix.SessionID) gofix.Messa
 	return nil
 }
 
-func run(settings *gofix.Settings) error {
+func run(ctx context.Context, settings *gofix.Settings) error {
 	registry := gofix.NewRegistry()
 
 	acceptor, err := gofix.NewAcceptor(
@@ -53,13 +55,8 @@ func run(settings *gofix.Settings) error {
 		return err
 	}
 
-	if err := acceptor.Start(); err != nil {
-		return err
-	}
-	defer acceptor.Stop()
-
-	// ...
-	return nil
+	// Run returns once ctx is done and the sessions have logged out.
+	return acceptor.Run(ctx)
 }
 ```
 

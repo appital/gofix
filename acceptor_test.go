@@ -69,7 +69,7 @@ func TestAcceptor_Start(t *testing.T) {
 			}
 
 			acceptor := &Acceptor{settings: tt.settings}
-			if err := acceptor.Start(); err != nil {
+			if _, err := startForTest(t, acceptor); err != nil {
 				assert.NotNil(t, err)
 			}
 			assert.Len(t, acceptor.listeners, 1)
@@ -85,8 +85,6 @@ func TestAcceptor_Start(t *testing.T) {
 					assert.True(t, ok)
 				}
 			}
-
-			acceptor.Stop()
 		})
 	}
 }
@@ -106,7 +104,6 @@ func TestAcceptor_SetTLSConfig(t *testing.T) {
 	logger, err := NewNullLogFactory().Create()
 	require.NoError(t, err)
 	acceptor := &Acceptor{settings: genericSettings, globalLog: logger}
-	defer acceptor.Stop()
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -121,7 +118,8 @@ func TestAcceptor_SetTLSConfig(t *testing.T) {
 	}
 
 	acceptor.SetTLSConfig(&customizedTLSConfig)
-	assert.NoError(t, acceptor.Start())
+	_, err = startForTest(t, acceptor)
+	assert.NoError(t, err)
 	assert.Len(t, acceptor.listeners, 1)
 
 	conn, err := tls.Dial("tcp", "localhost:5001", &tls.Config{
@@ -147,7 +145,6 @@ func TestAcceptor_SetCallback(t *testing.T) {
 	logger, err := NewNullLogFactory().Create()
 	require.NoError(t, err)
 	acceptor := &Acceptor{settings: genericSettings, globalLog: logger}
-	defer acceptor.Stop()
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -168,7 +165,8 @@ func TestAcceptor_SetCallback(t *testing.T) {
 		assert.Equal(t, &customizedTLSConfig, tlsConfig)
 		return tls.Listen("tcp", address, tlsConfig)
 	})
-	assert.NoError(t, acceptor.Start())
+	_, err = startForTest(t, acceptor)
+	assert.NoError(t, err)
 	assert.Len(t, acceptor.listeners, 1)
 
 	conn, err := tls.Dial("tcp", "localhost:5001", &tls.Config{
@@ -213,8 +211,8 @@ func TestAcceptor_TCPProxy(t *testing.T) {
 
 		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
 		require.NoError(t, err)
-		require.NoError(t, acceptor.Start())
-		t.Cleanup(acceptor.Stop)
+		_, err = startForTest(t, acceptor)
+		require.NoError(t, err)
 		return acceptor, sessionID
 	}
 
@@ -254,7 +252,7 @@ func TestAcceptor_TCPProxy(t *testing.T) {
 
 // startDynamicAcceptor starts an acceptor on port 5001 that accepts dynamic
 // sessions, giving each one its own qualifier.
-func startDynamicAcceptor(t *testing.T) *Acceptor {
+func startDynamicAcceptor(t *testing.T) (*Acceptor, func()) {
 	t.Helper()
 
 	sessionSettings := NewSessionSettings()
@@ -273,8 +271,9 @@ func startDynamicAcceptor(t *testing.T) *Acceptor {
 
 	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
 	require.NoError(t, err)
-	require.NoError(t, acceptor.Start())
-	return acceptor
+	stop, err := startForTest(t, acceptor)
+	require.NoError(t, err)
+	return acceptor, stop
 }
 
 // dynamicLogon builds a logon for a session the acceptor only knows dynamically.
@@ -296,8 +295,7 @@ func dynamicLogon() []byte {
 func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 	const connections = 20
 
-	acceptor := startDynamicAcceptor(t)
-	t.Cleanup(acceptor.Stop)
+	acceptor, _ := startDynamicAcceptor(t)
 
 	// Every connection logs on with the same CompIDs at once, so each one relies
 	// on the dynamic qualifier to get its own session.
@@ -332,7 +330,7 @@ func TestAcceptor_DynamicQualifierConcurrentLogons(t *testing.T) {
 }
 
 func TestAcceptor_StopClosesConnections(t *testing.T) {
-	acceptor := startDynamicAcceptor(t)
+	acceptor, stop := startDynamicAcceptor(t)
 
 	// One connection never sends a logon, so it is still waiting for its first
 	// message when the acceptor stops.
@@ -359,13 +357,13 @@ func TestAcceptor_StopClosesConnections(t *testing.T) {
 
 	stopped := make(chan struct{})
 	go func() {
-		acceptor.Stop()
+		stop()
 		close(stopped)
 	}()
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Stop did not return")
+		t.Fatal("acceptor did not shut down after its context was cancelled")
 	}
 
 	// Stop only returns once every connection has been handled, so both have
@@ -427,8 +425,8 @@ func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {
 	stores := &recordingStoreFactory{}
 	acceptor, err := NewAcceptor(&benchApp{}, stores, settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
-	require.NoError(t, acceptor.Start())
-	t.Cleanup(acceptor.Stop)
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
 
 	conn, err := net.Dial("tcp", "127.0.0.1:5002")
 	require.NoError(t, err)
@@ -532,8 +530,8 @@ func TestAcceptor_FirstMessageLimits(t *testing.T) {
 
 		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
 		require.NoError(t, err)
-		require.NoError(t, acceptor.Start())
-		t.Cleanup(acceptor.Stop)
+		_, err = startForTest(t, acceptor)
+		require.NoError(t, err)
 
 		conn, err := net.Dial("tcp", "127.0.0.1:5003")
 		require.NoError(t, err)
@@ -616,13 +614,8 @@ func TestAcceptor_DisconnectsPeerThatStopsReading(t *testing.T) {
 	log := &textLog{}
 	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, textLogFactory{log}, WithRegistry(NewRegistry()))
 	require.NoError(t, err)
-	require.NoError(t, acceptor.Start())
-	stopped := false
-	t.Cleanup(func() {
-		if !stopped {
-			acceptor.Stop()
-		}
-	})
+	stop, err := startForTest(t, acceptor)
+	require.NoError(t, err)
 
 	conn, err := net.Dial("tcp", "127.0.0.1:5005")
 	require.NoError(t, err)
@@ -659,13 +652,12 @@ func TestAcceptor_DisconnectsPeerThatStopsReading(t *testing.T) {
 
 	stopDone := make(chan struct{})
 	go func() {
-		acceptor.Stop()
+		stop()
 		close(stopDone)
 	}()
 	select {
 	case <-stopDone:
-		stopped = true
 	case <-time.After(5 * time.Second):
-		t.Fatal("Acceptor.Stop did not return")
+		t.Fatal("acceptor did not shut down after its context was cancelled")
 	}
 }
