@@ -37,6 +37,7 @@ direction:
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -100,10 +101,16 @@ func run(app gofix.Application, settings *gofix.Settings) error {
 		return err
 	}
 
-	if err := acceptor.Start(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := acceptor.Start(ctx); err != nil {
 		return err
 	}
-	defer acceptor.Stop()
+	// Log the sessions out before returning.
+	defer func() {
+		cancel()
+		acceptor.Wait()
+	}()
 
 	// Serve the metrics for Prometheus to scrape.
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))

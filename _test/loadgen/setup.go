@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func dataDictionaryPath() string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "spec", "FIX44.xml")
 }
 
-func startAcceptor(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Acceptor, error) {
+func startAcceptor(ctx context.Context, opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Acceptor, error) {
 	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketAcceptPort, strconv.Itoa(port))
 	settings.GlobalSettings().Set(config.SocketAcceptHost, "127.0.0.1")
@@ -75,14 +76,14 @@ func startAcceptor(opts options, port int, app gofix.Application, counter *byteC
 	if err != nil {
 		return nil, fmt.Errorf("creating acceptor: %w", err)
 	}
-	if err := acceptor.Start(); err != nil {
+	if err := acceptor.Start(ctx); err != nil {
 		return nil, fmt.Errorf("starting acceptor: %w", err)
 	}
 
 	return acceptor, nil
 }
 
-func startInitiator(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Initiator, error) {
+func startInitiator(ctx context.Context, opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Initiator, error) {
 	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketConnectHost, "127.0.0.1")
 	settings.GlobalSettings().Set(config.SocketConnectPort, strconv.Itoa(port))
@@ -104,7 +105,7 @@ func startInitiator(opts options, port int, app gofix.Application, counter *byte
 	if err != nil {
 		return nil, fmt.Errorf("creating initiator: %w", err)
 	}
-	if err := initiator.Start(); err != nil {
+	if err := initiator.Start(ctx); err != nil {
 		return nil, fmt.Errorf("starting initiator: %w", err)
 	}
 

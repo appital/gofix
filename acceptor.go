@@ -47,7 +47,7 @@ type Acceptor struct {
 	listenerShutdown      sync.WaitGroup
 	connectionGroup       sync.WaitGroup
 	stopCtx               context.Context
-	stopFunc              context.CancelFunc
+	lifecycle             lifecycle
 	dynamicSessions       bool
 	dynamicQualifier      bool
 	dynamicQualifierCount atomic.Int64
@@ -73,8 +73,34 @@ type ConnectionValidator interface {
 // NewListenerCallback is a function that returns a net.Listener for the given address and tls.Config struct.
 type NewListenerCallback func(address string, tlsConfig *tls.Config) (net.Listener, error)
 
-// Start accepting connections.
-func (a *Acceptor) Start() (err error) {
+// Start starts accepting connections. It returns once the acceptor is
+// listening, or with the error that stopped it starting, in which case nothing
+// is left running.
+//
+// ctx controls the acceptor for as long as it runs, not just this call. Once
+// ctx is done, whether it was cancelled or its deadline passed, the acceptor
+// stops accepting connections, logs out its sessions and closes their
+// connections; Wait returns once that is done. So do not pass a context whose
+// timeout is meant only to bound starting up.
+//
+// Start returns ctx's error, starting nothing, if ctx is already done. It may
+// be called only once, unless it fails.
+func (a *Acceptor) Start(ctx context.Context) (err error) {
+	if err = a.lifecycle.begin(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, listener := range a.listeners {
+			if listener != nil {
+				listener.Close()
+			}
+		}
+		a.lifecycle.abort()
+	}()
+
 	socketAcceptHost := ""
 	if a.settings.GlobalSettings().HasSetting(config.SocketAcceptHost) {
 		if socketAcceptHost, err = a.settings.GlobalSettings().Setting(config.SocketAcceptHost); err != nil {
@@ -128,7 +154,7 @@ func (a *Acceptor) Start() (err error) {
 		}
 	}
 
-	a.stopCtx, a.stopFunc = context.WithCancel(context.Background())
+	a.stopCtx = ctx
 	for _, s := range a.sessions {
 		a.sessionGroup.Go(s.run)
 	}
@@ -141,22 +167,27 @@ func (a *Acceptor) Start() (err error) {
 			a.listenForConnections(listener)
 		})
 	}
+	a.lifecycle.run(ctx, a.shutdown)
 	return
 }
 
-// Stop logs out existing sessions, close their connections, and stop accepting new connections.
-func (a *Acceptor) Stop() {
+// Wait blocks until the acceptor has shut down once the context passed to
+// Start is done. It returns immediately if Start has not succeeded.
+func (a *Acceptor) Wait() {
+	a.lifecycle.wait()
+}
+
+// shutdown stops accepting connections, logs out existing sessions and closes
+// their connections. It is called once the context passed to Start is done,
+// which also closes connections still waiting for their first message and
+// stops the dynamic sessions.
+func (a *Acceptor) shutdown() {
 	for _, listener := range a.listeners {
 		listener.Close()
 	}
 	// Once the listeners have returned no new connections can be handled.
 	a.listenerShutdown.Wait()
 
-	// Stopping closes connections still waiting for their first message and
-	// stops the dynamic sessions.
-	if a.stopFunc != nil {
-		a.stopFunc()
-	}
 	for _, session := range a.sessions {
 		session.stop()
 	}
@@ -165,9 +196,8 @@ func (a *Acceptor) Stop() {
 	a.sessionGroup.Wait()
 
 	for sessionID := range a.sessions {
-		err := a.reg().UnregisterSession(sessionID)
-		if err != nil {
-			return
+		if err := a.reg().UnregisterSession(sessionID); err != nil {
+			a.globalLog.OnEventf("Unregister session %v failed: %v", sessionID, err)
 		}
 	}
 }
@@ -526,7 +556,7 @@ func (a *Acceptor) SetConnectionValidator(validator ConnectionValidator) {
 }
 
 // SetTLSConfig allows the creator of the Acceptor to specify a fully customizable tls.Config of their choice,
-// which will be used in the Start() method.
+// which will be used by Start.
 //
 // Note: when the caller explicitly provides a tls.Config with this function,
 // it takes precendent over TLS settings specified in the acceptor's settings.GlobalSettings(),
@@ -536,7 +566,7 @@ func (a *Acceptor) SetTLSConfig(tlsConfig *tls.Config) {
 }
 
 // SetNewListenerCallback allows the creator of the Acceptor to specify the callback used to create each net.Listener
-// which will be used in the Start() method.
+// which will be used by Start.
 func (a *Acceptor) SetNewListenerCallback(cb NewListenerCallback) {
 	a.newListenerCallback = cb
 }

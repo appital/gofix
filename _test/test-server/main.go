@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -159,7 +160,10 @@ func main() {
 		return
 	}
 
-	if err = acceptor.Start(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	if err = acceptor.Start(ctx); err != nil {
 		fmt.Println("Unable to start Acceptor: ", err)
 		return
 	}
@@ -227,10 +231,8 @@ func main() {
 		}
 	}()
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
+	<-ctx.Done()
 	fmt.Println("stopping test server")
 
-	acceptor.Stop()
+	acceptor.Wait()
 }

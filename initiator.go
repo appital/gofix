@@ -35,56 +35,81 @@ type Initiator struct {
 	storeFactory    MessageStoreFactory
 	logFactory      LogFactory
 	globalLog       Log
-	stopChan        chan any
+	lifecycle       lifecycle
 	wg              sync.WaitGroup
 	sessions        map[SessionID]*session
 	sessionFactory
 }
 
-// Start Initiator.
-func (i *Initiator) Start() (err error) {
-	i.stopChan = make(chan any)
-
-	for sessionID, settings := range i.sessionSettings {
-		// TODO: move into session factory.
-		var tlsConfig *tls.Config
-		if tlsConfig, err = loadTLSConfig(settings); err != nil {
-			return
-		}
-
-		var dialer proxy.ContextDialer
-		if dialer, err = loadDialerConfig(settings); err != nil {
-			return
-		}
-
-		var handshakeTimeout time.Duration
-		if handshakeTimeout, err = loadTLSHandshakeTimeout(settings); err != nil {
-			return
-		}
-
-		i.wg.Go(func() {
-			i.handleConnection(i.sessions[sessionID], tlsConfig, dialer, handshakeTimeout)
-		})
-	}
-	return
+// initiatorConfig is what an initiator needs to connect a session.
+type initiatorConfig struct {
+	tlsConfig        *tls.Config
+	dialer           proxy.ContextDialer
+	handshakeTimeout time.Duration
 }
 
-// Stop Initiator.
-func (i *Initiator) Stop() {
-	select {
-	case <-i.stopChan:
-		// Closed already.
-		return
-	default:
+// Start starts connecting the initiator's sessions. It returns once every
+// session has started connecting, or with the error that stopped it starting,
+// in which case nothing is left running.
+//
+// ctx controls the initiator for as long as it runs, not just this call. Once
+// ctx is done, whether it was cancelled or its deadline passed, the initiator
+// logs out its sessions, closes their connections and stops reconnecting; Wait
+// returns once that is done. So do not pass a context whose timeout is meant
+// only to bound connecting.
+//
+// Start returns ctx's error, starting nothing, if ctx is already done. It may
+// be called only once, unless it fails.
+func (i *Initiator) Start(ctx context.Context) error {
+	if err := i.lifecycle.begin(ctx); err != nil {
+		return err
 	}
-	close(i.stopChan)
 
+	// Every session's settings are loaded before any session starts, so that
+	// a bad setting leaves nothing running.
+	configs := make(map[SessionID]initiatorConfig, len(i.sessionSettings))
+	for sessionID, settings := range i.sessionSettings {
+		// TODO: move into session factory.
+		var cfg initiatorConfig
+		var err error
+		if cfg.tlsConfig, err = loadTLSConfig(settings); err != nil {
+			i.lifecycle.abort()
+			return err
+		}
+		if cfg.dialer, err = loadDialerConfig(settings); err != nil {
+			i.lifecycle.abort()
+			return err
+		}
+		if cfg.handshakeTimeout, err = loadTLSHandshakeTimeout(settings); err != nil {
+			i.lifecycle.abort()
+			return err
+		}
+		configs[sessionID] = cfg
+	}
+
+	for sessionID, cfg := range configs {
+		i.wg.Go(func() {
+			i.handleConnection(ctx, i.sessions[sessionID], cfg.tlsConfig, cfg.dialer, cfg.handshakeTimeout)
+		})
+	}
+	i.lifecycle.run(ctx, i.shutdown)
+	return nil
+}
+
+// Wait blocks until the initiator has shut down once the context passed to
+// Start is done. It returns immediately if Start has not succeeded.
+func (i *Initiator) Wait() {
+	i.lifecycle.wait()
+}
+
+// shutdown waits for every session to log out and disconnect, which they do
+// once the context passed to Start is done, and unregisters them.
+func (i *Initiator) shutdown() {
 	i.wg.Wait()
 
 	for sessionID := range i.sessionSettings {
-		err := i.reg().UnregisterSession(sessionID)
-		if err != nil {
-			return
+		if err := i.reg().UnregisterSession(sessionID); err != nil {
+			i.globalLog.OnEventf("Unregister session %v failed: %v", sessionID, err)
 		}
 	}
 }
@@ -132,7 +157,7 @@ func NewInitiator(app Application, storeFactory MessageStoreFactory, appSettings
 }
 
 // waitForInSessionTime returns true if the session is in session, false if the handler should stop.
-func (i *Initiator) waitForInSessionTime(session *session) bool {
+func (i *Initiator) waitForInSessionTime(ctx context.Context, session *session) bool {
 	inSessionTime := make(chan any)
 	go func() {
 		session.waitForInSessionTime()
@@ -141,7 +166,7 @@ func (i *Initiator) waitForInSessionTime(session *session) bool {
 
 	select {
 	case <-inSessionTime:
-	case <-i.stopChan:
+	case <-ctx.Done():
 		return false
 	}
 
@@ -149,10 +174,10 @@ func (i *Initiator) waitForInSessionTime(session *session) bool {
 }
 
 // waitForReconnectInterval returns true if a reconnect should be re-attempted, false if handler should stop.
-func (i *Initiator) waitForReconnectInterval(reconnectInterval time.Duration) bool {
+func (i *Initiator) waitForReconnectInterval(ctx context.Context, reconnectInterval time.Duration) bool {
 	select {
 	case <-time.After(reconnectInterval):
-	case <-i.stopChan:
+	case <-ctx.Done():
 		return false
 	}
 
@@ -240,7 +265,9 @@ func clientHandshake(ctx context.Context, netConn net.Conn, address string, tlsC
 	return tlsConn, nil
 }
 
-func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, dialer proxy.ContextDialer, handshakeTimeout time.Duration) {
+// handleConnection connects session, and reconnects it whenever it
+// disconnects, until stopCtx is done.
+func (i *Initiator) handleConnection(stopCtx context.Context, session *session, tlsConfig *tls.Config, dialer proxy.ContextDialer, handshakeTimeout time.Duration) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		session.run()
@@ -254,22 +281,12 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 	connectionAttempt := 0
 
 	for {
-		if !i.waitForInSessionTime(session) {
+		if !i.waitForInSessionTime(stopCtx, session) {
 			return
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// We start a goroutine in order to be able to cancel the dialer mid-connection
-		// on receiving a stop signal to stop the initiator.
-		go func() {
-			select {
-			case <-i.stopChan:
-				cancel()
-			case <-ctx.Done():
-				return
-			}
-		}()
+		// Stopping cancels a dial or TLS handshake in progress.
+		ctx, cancel := context.WithCancel(stopCtx)
 
 		var disconnected chan any
 
@@ -292,13 +309,12 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 			close(disconnected)
 		}()
 
-		// This ensures we properly cleanup the goroutine and context used for
-		// dial cancelation after successful connection.
+		// The connection no longer needs ctx.
 		cancel()
 
 		select {
 		case <-disconnected:
-		case <-i.stopChan:
+		case <-stopCtx.Done():
 			return
 		}
 
@@ -307,7 +323,7 @@ func (i *Initiator) handleConnection(session *session, tlsConfig *tls.Config, di
 
 		connectionAttempt++
 		session.log.OnEventf("Reconnecting in %v", session.ReconnectInterval)
-		if !i.waitForReconnectInterval(session.ReconnectInterval) {
+		if !i.waitForReconnectInterval(stopCtx, session.ReconnectInterval) {
 			return
 		}
 	}

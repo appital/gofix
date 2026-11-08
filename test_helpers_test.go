@@ -1,10 +1,58 @@
 package gofix
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
+	"time"
 )
+
+// starter is an Acceptor or an Initiator.
+type starter interface {
+	Start(ctx context.Context) error
+	Wait()
+}
+
+// startForTest starts s with a context that is cancelled when the test ends,
+// and fails the test if s has not then shut down within ten seconds. stop
+// cancels the context early and waits for s to shut down; it may be called
+// more than once.
+func startForTest(t *testing.T, s starter) (stop func(), err error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stop = func() {
+		cancel()
+		s.Wait()
+	}
+	if err = s.Start(ctx); err != nil {
+		cancel()
+		return stop, err
+	}
+	t.Cleanup(func() {
+		cancel()
+		if !waitWithin(s, 10*time.Second) {
+			t.Error("did not shut down after its context was cancelled")
+		}
+	})
+	return stop, nil
+}
+
+// waitWithin reports whether s.Wait returns within d.
+func waitWithin(s starter, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		s.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
 
 // withValidCheckSum recomputes CheckSum(10) for a complete FIX frame used as a
 // test fixture. Tests that are about something other than wire integrity can

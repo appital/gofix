@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -162,17 +163,29 @@ func run(opts options) error {
 	clientBytes := &byteCounter{}
 	serverBytes := &byteCounter{}
 
-	acceptor, err := startAcceptor(opts, port, server, serverBytes)
+	// Each side has its own context so that, as the deferred calls run in
+	// reverse, the initiator logs out before the acceptor stops.
+	acceptorCtx, stopAcceptor := context.WithCancel(context.Background())
+	defer stopAcceptor()
+	acceptor, err := startAcceptor(acceptorCtx, opts, port, server, serverBytes)
 	if err != nil {
 		return err
 	}
-	defer acceptor.Stop()
+	defer func() {
+		stopAcceptor()
+		acceptor.Wait()
+	}()
 
-	initiator, err := startInitiator(opts, port, client, clientBytes)
+	initiatorCtx, stopInitiator := context.WithCancel(context.Background())
+	defer stopInitiator()
+	initiator, err := startInitiator(initiatorCtx, opts, port, client, clientBytes)
 	if err != nil {
 		return err
 	}
-	defer initiator.Stop()
+	defer func() {
+		stopInitiator()
+		initiator.Wait()
+	}()
 
 	sessionIDs, err := awaitLogon(client, opts.sessions, 30*time.Second)
 	if err != nil {
