@@ -47,7 +47,9 @@ type Acceptor struct {
 	listenerShutdown      sync.WaitGroup
 	connectionGroup       sync.WaitGroup
 	stopCtx               context.Context
-	stopFunc              context.CancelFunc
+	lifecycle             lifecycle
+	readyOnce             sync.Once
+	ready                 chan struct{}
 	dynamicSessions       bool
 	dynamicQualifier      bool
 	dynamicQualifierCount atomic.Int64
@@ -73,8 +75,62 @@ type ConnectionValidator interface {
 // NewListenerCallback is a function that returns a net.Listener for the given address and tls.Config struct.
 type NewListenerCallback func(address string, tlsConfig *tls.Config) (net.Listener, error)
 
-// Start accepting connections.
-func (a *Acceptor) Start() (err error) {
+// Run accepts connections until ctx is done, then stops accepting, logs out
+// its sessions, closes their connections and returns. It returns nil once it
+// has shut down because ctx is done, or the error that stopped it starting, in
+// which case nothing is left running and Run may be called again.
+//
+// Run returns ctx's error, starting nothing, if ctx is already done, and an
+// error if it is already running or has run. Ready is closed once the acceptor
+// is listening.
+func (a *Acceptor) Run(ctx context.Context) error {
+	if err := a.lifecycle.begin(ctx); err != nil {
+		return err
+	}
+	if err := a.start(ctx); err != nil {
+		a.lifecycle.abort()
+		return err
+	}
+	close(a.readyChan())
+
+	<-ctx.Done()
+	return a.shutdown()
+}
+
+// Ready returns a channel that is closed once Run has started the acceptor
+// and it is listening on every port. It is never closed if Run fails to
+// start, so wait on it together with Run's result or its context:
+//
+//	g, ctx := errgroup.WithContext(ctx)
+//	g.Go(func() error { return acceptor.Run(ctx) })
+//	select {
+//	case <-acceptor.Ready():
+//	case <-ctx.Done():
+//		return g.Wait()
+//	}
+func (a *Acceptor) Ready() <-chan struct{} {
+	return a.readyChan()
+}
+
+func (a *Acceptor) readyChan() chan struct{} {
+	a.readyOnce.Do(func() { a.ready = make(chan struct{}) })
+	return a.ready
+}
+
+// start opens the listeners and starts the sessions. If it fails, it closes
+// the listeners it opened and starts nothing.
+func (a *Acceptor) start(ctx context.Context) (err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, listener := range a.listeners {
+			if listener != nil {
+				listener.Close()
+			}
+		}
+	}()
+
 	socketAcceptHost := ""
 	if a.settings.GlobalSettings().HasSetting(config.SocketAcceptHost) {
 		if socketAcceptHost, err = a.settings.GlobalSettings().Setting(config.SocketAcceptHost); err != nil {
@@ -128,7 +184,7 @@ func (a *Acceptor) Start() (err error) {
 		}
 	}
 
-	a.stopCtx, a.stopFunc = context.WithCancel(context.Background())
+	a.stopCtx = ctx
 	for _, s := range a.sessions {
 		a.sessionGroup.Go(s.run)
 	}
@@ -144,19 +200,17 @@ func (a *Acceptor) Start() (err error) {
 	return
 }
 
-// Stop logs out existing sessions, close their connections, and stop accepting new connections.
-func (a *Acceptor) Stop() {
+// shutdown stops accepting connections, logs out existing sessions and closes
+// their connections. It is called once the context passed to Run is done,
+// which also closes connections still waiting for their first message and
+// stops the dynamic sessions.
+func (a *Acceptor) shutdown() error {
 	for _, listener := range a.listeners {
 		listener.Close()
 	}
 	// Once the listeners have returned no new connections can be handled.
 	a.listenerShutdown.Wait()
 
-	// Stopping closes connections still waiting for their first message and
-	// stops the dynamic sessions.
-	if a.stopFunc != nil {
-		a.stopFunc()
-	}
 	for _, session := range a.sessions {
 		session.stop()
 	}
@@ -164,12 +218,13 @@ func (a *Acceptor) Stop() {
 	a.connectionGroup.Wait()
 	a.sessionGroup.Wait()
 
+	var errs []error
 	for sessionID := range a.sessions {
-		err := a.reg().UnregisterSession(sessionID)
-		if err != nil {
-			return
+		if err := a.reg().UnregisterSession(sessionID); err != nil {
+			errs = append(errs, fmt.Errorf("unregistering session %v: %w", sessionID, err))
 		}
 	}
+	return errors.Join(errs...)
 }
 
 // RemoteAddr gets remote IP address for a given session.
@@ -526,7 +581,7 @@ func (a *Acceptor) SetConnectionValidator(validator ConnectionValidator) {
 }
 
 // SetTLSConfig allows the creator of the Acceptor to specify a fully customizable tls.Config of their choice,
-// which will be used in the Start() method.
+// which will be used by Run.
 //
 // Note: when the caller explicitly provides a tls.Config with this function,
 // it takes precendent over TLS settings specified in the acceptor's settings.GlobalSettings(),
@@ -536,7 +591,7 @@ func (a *Acceptor) SetTLSConfig(tlsConfig *tls.Config) {
 }
 
 // SetNewListenerCallback allows the creator of the Acceptor to specify the callback used to create each net.Listener
-// which will be used in the Start() method.
+// which will be used by Run.
 func (a *Acceptor) SetNewListenerCallback(cb NewListenerCallback) {
 	a.newListenerCallback = cb
 }

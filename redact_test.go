@@ -280,8 +280,8 @@ func TestAcceptorGlobalLogRedactsCredentials(t *testing.T) {
 	log := &textLog{}
 	acceptor, err := NewAcceptor(&MockApp{}, NewMemoryStoreFactory(), settings, textLogFactory{log}, WithRegistry(NewRegistry()))
 	require.NoError(t, err)
-	require.NoError(t, acceptor.Start())
-	t.Cleanup(acceptor.Stop)
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
 
 	conn, err := net.Dial("tcp", "127.0.0.1:5004")
 	require.NoError(t, err)

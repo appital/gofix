@@ -37,10 +37,13 @@ direction:
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/appital/gofix"
 	"github.com/appital/gofix/log/screen"
@@ -82,7 +85,7 @@ type sessionMetrics struct {
 func (m sessionMetrics) MessageSent(int)     { m.sent.Inc() }
 func (m sessionMetrics) MessageReceived(int) { m.received.Inc() }
 
-func run(app gofix.Application, settings *gofix.Settings) error {
+func run(ctx context.Context, app gofix.Application, settings *gofix.Settings) error {
 	reg := prometheus.NewRegistry()
 	metrics, err := newMessageMetrics(reg)
 	if err != nil {
@@ -100,14 +103,24 @@ func run(app gofix.Application, settings *gofix.Settings) error {
 		return err
 	}
 
-	if err := acceptor.Start(); err != nil {
-		return err
-	}
-	defer acceptor.Stop()
+	// If either the acceptor or the metrics server fails, the other stops
+	// too. Run returns once the sessions have logged out.
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return acceptor.Run(ctx) })
 
 	// Serve the metrics for Prometheus to scrape.
-	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	return http.ListenAndServe(":2112", nil)
+	server := &http.Server{
+		Addr:    ":2112",
+		Handler: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
+	}
+	context.AfterFunc(ctx, func() { server.Close() })
+	g.Go(func() error {
+		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	})
+	return g.Wait()
 }
 ```
 

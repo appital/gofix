@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -159,11 +160,6 @@ func main() {
 		return
 	}
 
-	if err = acceptor.Start(); err != nil {
-		fmt.Println("Unable to start Acceptor: ", err)
-		return
-	}
-
 	// http handler for seqnum resets for specific test defs. not applicable for most tests.
 	http.HandleFunc("/seqnum", func(w http.ResponseWriter, r *http.Request) {
 		defer w.WriteHeader(http.StatusOK)
@@ -227,10 +223,12 @@ func main() {
 		}
 	}()
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
-	fmt.Println("stopping test server")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	context.AfterFunc(ctx, func() { fmt.Println("stopping test server") })
 
-	acceptor.Stop()
+	// Run returns once the acceptor has shut down after an interrupt.
+	if err = acceptor.Run(ctx); err != nil {
+		fmt.Println("Acceptor failed: ", err)
+	}
 }

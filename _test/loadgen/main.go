@@ -162,19 +162,29 @@ func run(opts options) error {
 	clientBytes := &byteCounter{}
 	serverBytes := &byteCounter{}
 
-	acceptor, err := startAcceptor(opts, port, server, serverBytes)
+	acceptor, err := newAcceptor(opts, port, server, serverBytes)
 	if err != nil {
 		return err
 	}
-	defer acceptor.Stop()
-
-	initiator, err := startInitiator(opts, port, client, clientBytes)
+	initiator, err := newInitiator(opts, port, client, clientBytes)
 	if err != nil {
 		return err
 	}
-	defer initiator.Stop()
 
-	sessionIDs, err := awaitLogon(client, opts.sessions, 30*time.Second)
+	// The deferred calls run in reverse, so the initiator logs out before the
+	// acceptor stops.
+	runningAcceptor := runInBackground(acceptor)
+	defer runningAcceptor.stop("acceptor")
+	select {
+	case <-acceptor.Ready():
+	case <-runningAcceptor.done:
+		return fmt.Errorf("starting acceptor: %w", runningAcceptor.err)
+	}
+
+	runningInitiator := runInBackground(initiator)
+	defer runningInitiator.stop("initiator")
+
+	sessionIDs, err := awaitLogon(client, opts.sessions, runningInitiator, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -338,7 +348,7 @@ func counterparty(id gofix.SessionID) gofix.SessionID {
 	}
 }
 
-func awaitLogon(client *clientApp, want int, timeout time.Duration) ([]gofix.SessionID, error) {
+func awaitLogon(client *clientApp, want int, initiator *background, timeout time.Duration) ([]gofix.SessionID, error) {
 	var ids []gofix.SessionID
 	deadline := time.After(timeout)
 
@@ -346,6 +356,8 @@ func awaitLogon(client *clientApp, want int, timeout time.Duration) ([]gofix.Ses
 		select {
 		case id := <-client.loggedOn:
 			ids = append(ids, id)
+		case <-initiator.done:
+			return nil, fmt.Errorf("starting initiator: %w", initiator.err)
 		case <-deadline:
 			return nil, fmt.Errorf("only %d of %d sessions logged on within %v", len(ids), want, timeout)
 		}

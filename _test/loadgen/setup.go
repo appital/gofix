@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func dataDictionaryPath() string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "spec", "FIX44.xml")
 }
 
-func startAcceptor(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Acceptor, error) {
+func newAcceptor(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Acceptor, error) {
 	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketAcceptPort, strconv.Itoa(port))
 	settings.GlobalSettings().Set(config.SocketAcceptHost, "127.0.0.1")
@@ -75,14 +76,10 @@ func startAcceptor(opts options, port int, app gofix.Application, counter *byteC
 	if err != nil {
 		return nil, fmt.Errorf("creating acceptor: %w", err)
 	}
-	if err := acceptor.Start(); err != nil {
-		return nil, fmt.Errorf("starting acceptor: %w", err)
-	}
-
 	return acceptor, nil
 }
 
-func startInitiator(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Initiator, error) {
+func newInitiator(opts options, port int, app gofix.Application, counter *byteCounter) (*gofix.Initiator, error) {
 	settings := gofix.NewSettings()
 	settings.GlobalSettings().Set(config.SocketConnectHost, "127.0.0.1")
 	settings.GlobalSettings().Set(config.SocketConnectPort, strconv.Itoa(port))
@@ -104,10 +101,6 @@ func startInitiator(opts options, port int, app gofix.Application, counter *byte
 	if err != nil {
 		return nil, fmt.Errorf("creating initiator: %w", err)
 	}
-	if err := initiator.Start(); err != nil {
-		return nil, fmt.Errorf("starting initiator: %w", err)
-	}
-
 	return initiator, nil
 }
 
@@ -246,4 +239,31 @@ func (ps *profileSet) writeNamed(path, profile string) error {
 	}
 
 	return nil
+}
+
+// background is an Acceptor or Initiator running in its own goroutine.
+type background struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
+}
+
+// runInBackground calls r.Run in a new goroutine.
+func runInBackground(r interface{ Run(context.Context) error }) *background {
+	ctx, cancel := context.WithCancel(context.Background())
+	b := &background{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		b.err = r.Run(ctx)
+		close(b.done)
+	}()
+	return b
+}
+
+// stop cancels Run's context and waits for it to return, reporting its error.
+func (b *background) stop(name string) {
+	b.cancel()
+	<-b.done
+	if b.err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", name, b.err)
+	}
 }

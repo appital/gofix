@@ -4,6 +4,18 @@
 * A Logon that is refused, because `FromAdmin` returned `RejectLogon` or because its HeartBtInt or NextExpectedMsgSeqNum is invalid, no longer changes the session's state. The Logout sent in reply carries the next sender MsgSeqNum but is not saved to the `MessageStore`, and neither the sender nor the target sequence number advances; both used to, after `RejectLogon`. This applies to an initiator rejecting a Logon response too. A Logon whose MsgSeqNum is too low is still answered with a persisted Logout
 * An initiator's TLS handshake now times out after `SocketTimeout`, or 30 seconds if it is not set, closing the connection and reconnecting after `ReconnectInterval`. It used to wait for ever for a server that never completed the handshake. Set `SocketTimeout=0` for no timeout
 * `MessageRouter`'s methods now have pointer receivers, so only a `*MessageRouter`, as `NewMessageRouter` returns, implements `Application`. A `MessageRouter` must not be copied after first use
+* `Acceptor` and `Initiator` are now controlled by a context: `Start` and `Stop` are replaced by `Run(ctx) error`, which starts, runs until `ctx` is done, then stops accepting or reconnecting, logs out the sessions, closes their connections and returns. It returns nil after a clean shutdown, or the error that stopped it starting, such as a port in use, in which case nothing is left running. It returns an error if `ctx` is already done or if it is already running or has run. `Acceptor.Ready` returns a channel that is closed once the acceptor is listening. Calling `Stop` before `Start`, which hung an acceptor and panicked an initiator, and calling it from several goroutines, which could panic an initiator, are no longer possible. To migrate, run it in a goroutine, for example with `errgroup`:
+  ```go
+  g, ctx := errgroup.WithContext(ctx)
+  g.Go(func() error { return acceptor.Run(ctx) })
+  select {
+  case <-acceptor.Ready(): // listening
+  case <-ctx.Done():
+      return g.Wait() // failed to start
+  }
+  // ...
+  return g.Wait()
+  ```
 
 ### BUG FIXES
 * A panic in an `Application` callback, `Log` or `Metrics` called by a session ended the process, taking every other session with it. The session now recovers it, logs it with its stack trace and disconnects; other sessions carry on
@@ -12,6 +24,7 @@
 * An initiator left its connection open when the TLS handshake failed, or when the session could not be connected to it, until it was garbage collected. It now closes it. `Initiator.Stop` also no longer waits for a TLS handshake in progress to finish
 * With several `SocketConnectHost`s and no `SocketServerName` set, an initiator verified every server's TLS certificate against the first host it connected to, so it could not fail over to a host with its own certificate. Each connection is now verified against the host it was made to, and an IPv6 address is used without its brackets
 * Adding a route to a `MessageRouter` while sessions were routing messages through it was a data race, and could end the process with `concurrent map read and map write`. `MessageRouter` is now safe for concurrent use, and routing through it takes no lock
+* An `Acceptor.Start` that failed left the listeners it had already opened listening, and an `Initiator.Start` that failed on one session's settings left the sessions before it connecting. A `Run` that fails to start now leaves nothing running, and may be retried
 
 ## 0.4.0 (October 29, 2026)
 
