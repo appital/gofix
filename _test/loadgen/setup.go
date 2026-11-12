@@ -118,7 +118,7 @@ func storeFactoryFor(opts options, settings *gofix.Settings, side string) (gofix
 		}
 		settings.GlobalSettings().Set(config.FileStorePath, dir)
 
-		return file.NewStoreFactory(settings), nil
+		return file.NewStoreFactory(), nil
 	}
 
 	return nil, fmt.Errorf("unknown store %q", opts.store)

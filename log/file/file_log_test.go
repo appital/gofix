@@ -145,3 +145,37 @@ func TestFileLog_Append(t *testing.T) {
 		t.Error("Unexpected EOF")
 	}
 }
+
+// TestFileLog_CreateSessionLogUsesSessionSettings checks that a session's log
+// is written to the FileLogPath in the settings it is created with, even for a
+// session the factory's own settings do not contain, such as one added by
+// Reload.
+func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
+	settings := gofix.NewSettings()
+	settings.GlobalSettings().Set("FileLogPath", t.TempDir())
+	factory, err := NewLogFactory(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionDir := t.TempDir()
+	sessionSettings := gofix.NewSessionSettings()
+	sessionSettings.Set("FileLogPath", sessionDir)
+	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "ADDED"}
+	if _, err := factory.CreateSessionLog(sessionID, sessionSettings); err != nil {
+		t.Fatal(err)
+	}
+	expected := path.Join(sessionDir, sessionIDFilenamePrefix(sessionID)+".event.current.log")
+	if _, err := os.Stat(expected); err != nil {
+		t.Errorf("%v should exist: %v", expected, err)
+	}
+
+	if _, err := factory.CreateSessionLog(sessionID, gofix.NewSessionSettings()); err == nil {
+		t.Error("Should expect error when session settings have no file log path")
+	}
+
+	unsafe := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "..", TargetCompID: "x/y"}
+	if _, err := factory.CreateSessionLog(unsafe, sessionSettings); err == nil {
+		t.Error("Should expect error for a SessionID that names a path")
+	}
+}

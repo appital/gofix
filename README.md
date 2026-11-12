@@ -146,6 +146,8 @@ It records `gofix_outgoing_message_count`, `gofix_outgoing_message_bytes`,
   run engines whose SessionIDs overlap.
 - [docs/METRICS.md](docs/METRICS.md) explains the `Metrics` interface, with an
   example that implements a Prometheus counter.
+- [docs/RELOADING.md](docs/RELOADING.md) explains how to change a running
+  engine's sessions with `Reload`.
 
 ## Development
 

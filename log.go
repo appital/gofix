@@ -35,6 +35,11 @@ type LogFactory interface {
 	// Create global log.
 	Create() (Log, error)
 
-	// CreateSessionLog session specific log.
-	CreateSessionLog(sessionID SessionID) (Log, error)
+	// CreateSessionLog creates the log for the session sessionID. settings
+	// is the session's effective settings: the global settings with the
+	// session's own on top, or the global settings alone for a session an
+	// acceptor creates for DynamicSessions. A factory should read anything
+	// it needs for the session, such as where to write the log, from
+	// settings, so that it can create logs for sessions added by Reload.
+	CreateSessionLog(sessionID SessionID, settings *SessionSettings) (Log, error)
 }

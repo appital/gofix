@@ -103,7 +103,7 @@ func (suite *SQLLogTestSuite) TestSQLLogNoSession() {
 
 func (suite *SQLLogTestSuite) TestSQLLog() {
 	// create log
-	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID)
+	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.Nil(suite.T(), err)
 	suite.log = log.(*sqlLog)
 

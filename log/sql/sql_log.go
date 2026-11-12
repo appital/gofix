@@ -88,18 +88,7 @@ func (f sqlLogFactory) Create() (log gofix.Log, err error) {
 }
 
 // CreateSessionLog creates a new SQLLog implementation of the Log interface.
-func (f sqlLogFactory) CreateSessionLog(sessionID gofix.SessionID) (log gofix.Log, err error) {
-	globalSettings := f.settings.GlobalSettings()
-	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
-
-	sessionSettings, ok := f.settings.SessionSettings()[sessionID]
-	if !ok {
-		if dynamicSessions {
-			sessionSettings = globalSettings
-		} else {
-			return nil, fmt.Errorf("unknown session: %v", sessionID)
-		}
-	}
+func (f sqlLogFactory) CreateSessionLog(sessionID gofix.SessionID, sessionSettings *gofix.SessionSettings) (log gofix.Log, err error) {
 
 	sqlDriver, err := sessionSettings.Setting(config.SQLLogDriver)
 	if err != nil {

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 	"github.com/appital/gofix/internal/testsuite"
 	assert2 "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,7 +55,7 @@ TargetCompID=%s`, fileStorePath, sessionID.BeginString, sessionID.SenderCompID, 
 	require.Nil(suite.T(), err)
 
 	// create store
-	suite.MsgStore, err = NewStoreFactory(settings).Create(sessionID)
+	suite.MsgStore, err = NewStoreFactory().Create(sessionID, settings.SessionSettings()[sessionID])
 	require.Nil(suite.T(), err)
 }
 
@@ -91,4 +92,23 @@ func TestNewFileStoreRefusesPathInSessionID(t *testing.T) {
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "only the store directory should exist")
+}
+
+// TestStoreFactoryUsesSessionSettings checks that a session's store is kept
+// under the FileStorePath in the settings it is created with.
+func TestStoreFactoryUsesSessionSettings(t *testing.T) {
+	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "ADDED"}
+
+	dir := t.TempDir()
+	settings := gofix.NewSessionSettings()
+	settings.Set(config.FileStorePath, dir)
+	store, err := NewStoreFactory().Create(sessionID, settings)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	_, err = NewStoreFactory().Create(sessionID, gofix.NewSessionSettings())
+	require.Error(t, err, "FileStorePath is required")
 }

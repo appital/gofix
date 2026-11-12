@@ -1,3 +1,16 @@
+## Unreleased
+
+### BREAKING CHANGES
+* `MessageStoreFactory.Create` and `LogFactory.CreateSessionLog` now take the session's effective settings, its global settings with its own on top, as a second argument: `Create(sessionID SessionID, settings *SessionSettings)` and `CreateSessionLog(sessionID SessionID, settings *SessionSettings)`. For a dynamic session, `settings` is the global settings. A custom factory should read what it needs for a session from `settings` rather than from a `*Settings` it was built with, so that it can create stores and logs for sessions added by `Reload`. A factory that needs no settings can ignore the argument:
+  ```go
+  func (f myStoreFactory) Create(sessionID gofix.SessionID, _ *gofix.SessionSettings) (gofix.MessageStore, error)
+  ```
+* `file.NewStoreFactory` and `sql.NewStoreFactory` no longer take a `*Settings`, since each store is configured from its session's settings. Replace `file.NewStoreFactory(settings)` with `file.NewStoreFactory()`. `file.NewLogFactory` and `sql.NewLogFactory` still take `*Settings`, for the global log
+* The file log now writes a dynamic session's log under the global `FileLogPath`. It used to refuse to create a log for a session that was not in the settings it was built with, so an acceptor could not create dynamic sessions with it
+
+### FEATURES
+* `Acceptor.Reload(ctx, settings)` and `Initiator.Reload(ctx, settings)` bring a running engine's sessions in line with new settings without restarting it. Sessions that are new are started, sessions that are gone are logged out and unregistered, and sessions whose effective settings changed are restarted, keeping their store and so their sequence numbers. Sessions whose settings are unchanged stay connected. The acceptor opens and closes listeners as ports come into and go out of use. Every new and changed session is built before anything is stopped, so a `Reload` that fails changes nothing. An acceptor's engine-level settings, such as `SocketAcceptHost`, `UseTCPProxy`, `MaxMessageSize` and its TLS settings, cannot be reloaded. See [docs/RELOADING.md](docs/RELOADING.md)
+
 ## 0.5.0 (November 8, 2026)
 
 ### BREAKING CHANGES

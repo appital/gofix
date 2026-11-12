@@ -92,13 +92,19 @@ func (f sessionFactory) createSession(
 		return
 	}
 
-	if err = f.reg().register(session); err != nil {
-		return
+	err = f.registerSession(session)
+	return
+}
+
+// registerSession registers a session built by newSession and tells its
+// application it has been created.
+func (f sessionFactory) registerSession(session *session) error {
+	if err := f.reg().register(session); err != nil {
+		return err
 	}
 	session.sessionHandler.OnCreate(session.sessionID)
 	session.log.OnEvent("Created session")
-
-	return
+	return nil
 }
 
 func (f sessionFactory) newSession(
@@ -489,7 +495,7 @@ func (f sessionFactory) newSession(
 		return
 	}
 
-	if s.log, err = logFactory.CreateSessionLog(s.sessionID); err != nil {
+	if s.log, err = logFactory.CreateSessionLog(s.sessionID, settings); err != nil {
 		return
 	}
 	s.log = newRedactingLog(s.log, s.redactor)
@@ -500,7 +506,7 @@ func (f sessionFactory) newSession(
 		s.metrics = nullMetrics{}
 	}
 
-	if s.store, err = storeFactory.Create(s.sessionID); err != nil {
+	if s.store, err = storeFactory.Create(s.sessionID, settings); err != nil {
 		return
 	}
 

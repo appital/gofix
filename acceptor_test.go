@@ -401,11 +401,11 @@ type recordingStoreFactory struct {
 	created []SessionID
 }
 
-func (f *recordingStoreFactory) Create(sessionID SessionID) (MessageStore, error) {
+func (f *recordingStoreFactory) Create(sessionID SessionID, settings *SessionSettings) (MessageStore, error) {
 	f.mu.Lock()
 	f.created = append(f.created, sessionID)
 	f.mu.Unlock()
-	return NewMemoryStoreFactory().Create(sessionID)
+	return NewMemoryStoreFactory().Create(sessionID, settings)
 }
 
 func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {

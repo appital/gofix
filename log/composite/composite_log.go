@@ -63,10 +63,10 @@ func (clf compositeLogFactory) Create() (gofix.Log, error) {
 	return compositeLog{logs}, nil
 }
 
-func (clf compositeLogFactory) CreateSessionLog(sessionID gofix.SessionID) (gofix.Log, error) {
+func (clf compositeLogFactory) CreateSessionLog(sessionID gofix.SessionID, settings *gofix.SessionSettings) (gofix.Log, error) {
 	logs := []gofix.Log{}
 	for _, lf := range clf.logFactories {
-		log, err := lf.CreateSessionLog(sessionID)
+		log, err := lf.CreateSessionLog(sessionID, settings)
 		if err != nil {
 			return nil, err
 		}

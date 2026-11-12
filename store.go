@@ -46,5 +46,11 @@ type MessageStore interface {
 
 // The MessageStoreFactory interface is used by session to create a session specific message store.
 type MessageStoreFactory interface {
-	Create(sessionID SessionID) (MessageStore, error)
+	// Create creates the store for the session sessionID. settings is the
+	// session's effective settings: the global settings with the session's
+	// own on top, or the global settings alone for a session an acceptor
+	// creates for DynamicSessions. A factory should read anything it needs
+	// for the session, such as where to keep the store, from settings, so
+	// that it can create stores for sessions added by Reload.
+	Create(sessionID SessionID, settings *SessionSettings) (MessageStore, error)
 }

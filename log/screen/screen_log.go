@@ -52,7 +52,7 @@ func (screenLogFactory) Create() (gofix.Log, error) {
 	return log, nil
 }
 
-func (screenLogFactory) CreateSessionLog(sessionID gofix.SessionID) (gofix.Log, error) {
+func (screenLogFactory) CreateSessionLog(sessionID gofix.SessionID, _ *gofix.SessionSettings) (gofix.Log, error) {
 	log := screenLog{sessionID.String()}
 	return log, nil
 }

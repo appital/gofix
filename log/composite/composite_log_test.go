@@ -83,7 +83,7 @@ func (suite *CompositeLogTestSuite) TestCreateLogSession() {
 	require.Nil(suite.T(), err)
 
 	// create log
-	_, err = NewLogFactory([]gofix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID)
+	_, err = NewLogFactory([]gofix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.Nil(suite.T(), err)
 }
 
@@ -118,7 +118,7 @@ type recordingLogFactory struct {
 
 func (f recordingLogFactory) Create() (gofix.Log, error) { return f.log, nil }
 
-func (f recordingLogFactory) CreateSessionLog(gofix.SessionID) (gofix.Log, error) {
+func (f recordingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
 	return f.log, nil
 }
 

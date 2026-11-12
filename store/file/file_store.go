@@ -31,9 +31,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-type fileStoreFactory struct {
-	settings *gofix.Settings
-}
+type fileStoreFactory struct{}
 
 type fileStore struct {
 	sessionID          gofix.SessionID
@@ -54,23 +52,13 @@ type fileStore struct {
 }
 
 // NewStoreFactory returns a file-based implementation of MessageStoreFactory.
-func NewStoreFactory(settings *gofix.Settings) gofix.MessageStoreFactory {
-	return fileStoreFactory{settings: settings}
+// Each session's store is configured by its settings.
+func NewStoreFactory() gofix.MessageStoreFactory {
+	return fileStoreFactory{}
 }
 
 // Create creates a new FileStore implementation of the MessageStore interface.
-func (f fileStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.MessageStore, err error) {
-	globalSettings := f.settings.GlobalSettings()
-	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
-
-	sessionSettings, ok := f.settings.SessionSettings()[sessionID]
-	if !ok {
-		if dynamicSessions {
-			sessionSettings = globalSettings
-		} else {
-			return nil, fmt.Errorf("unknown session: %v", sessionID)
-		}
-	}
+func (f fileStoreFactory) Create(sessionID gofix.SessionID, sessionSettings *gofix.SessionSettings) (msgStore gofix.MessageStore, err error) {
 
 	dirname, err := sessionSettings.Setting(config.FileStorePath)
 	if err != nil {
@@ -100,7 +88,7 @@ func newFileStore(sessionID gofix.SessionID, dirname string, fileSync bool) (*fi
 		return nil, fmt.Errorf("session ID cannot be used in a file name: %q", sessionPrefix)
 	}
 
-	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
+	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID, nil)
 	if memErr != nil {
 		return nil, errors.Wrap(memErr, "cache creation")
 	}

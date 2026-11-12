@@ -195,13 +195,29 @@ func (s *session) stop() {
 	})
 }
 
+type forceStopReq struct{}
+
+// forceStop stops the session without waiting for its Logout to be
+// acknowledged, disconnecting it if it is connected. It is used once a stop
+// has been waited on for as long as the caller allows.
+func (s *session) forceStop() {
+	select {
+	case s.admin <- forceStopReq{}:
+	case <-s.done:
+	}
+}
+
 type waitChan <-chan any
 
 type waitForInSessionReq struct{ rep chan<- waitChan }
 
 func (s *session) waitForInSessionTime() {
 	rep := make(chan waitChan)
-	s.admin <- waitForInSessionReq{rep}
+	select {
+	case s.admin <- waitForInSessionReq{rep}:
+	case <-s.done:
+		return
+	}
 	if wait, ok := <-rep; ok {
 		<-wait
 	}
@@ -1070,6 +1086,10 @@ func (s *session) onAdmin(msg any) {
 
 	case stopReq:
 		s.Stop(s)
+
+	case forceStopReq:
+		s.pendingStop = true
+		s.setState(s, latentState{})
 
 	case waitForInSessionReq:
 		if !s.IsSessionTime() {
