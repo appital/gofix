@@ -47,7 +47,7 @@ func newLifecycleAcceptor(t *testing.T, app Application, port int) *Acceptor {
 		config.SocketAcceptPort: fmt.Sprint(port),
 		config.HeartBtInt:       "30",
 	})
-	acceptor, err := NewAcceptor(app, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	acceptor, err := NewAcceptor(app, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	return acceptor
 }
@@ -60,7 +60,7 @@ func newLifecycleInitiator(t *testing.T, app Application, port int) *Initiator {
 		config.HeartBtInt:        "30",
 		config.ReconnectInterval: "1",
 	})
-	initiator, err := NewInitiator(app, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	initiator, err := NewInitiator(app, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	return initiator
 }
@@ -79,6 +79,10 @@ func TestReadyIsOpenBeforeRun(t *testing.T) {
 	acceptor := newLifecycleAcceptor(t, &lifecycleApp{}, 5006)
 	assert.False(t, isClosed(acceptor.Ready()))
 	assert.False(t, isClosed((&Acceptor{}).Ready()), "Ready should work on an Acceptor not made by NewAcceptor")
+
+	initiator := newLifecycleInitiator(t, &lifecycleApp{}, 5006)
+	assert.False(t, isClosed(initiator.Ready()))
+	assert.False(t, isClosed((&Initiator{}).Ready()), "Ready should work on an Initiator not made by NewInitiator")
 }
 
 func TestRunWithCancelledContextStartsNothing(t *testing.T) {
@@ -152,7 +156,7 @@ func TestAcceptorRunFailureClosesListeners(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	acceptor, err := NewAcceptor(&lifecycleApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	acceptor, err := NewAcceptor(&lifecycleApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 
 	var created []net.Listener
@@ -218,7 +222,7 @@ func TestInitiatorRunFailureStartsNoSessions(t *testing.T) {
 		_, err := settings.AddSession(sessionSettings)
 		require.NoError(t, err)
 	}
-	initiator, err := NewInitiator(&lifecycleApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	initiator, err := NewInitiator(&lifecycleApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 
 	// The context stays live after Run fails, as a caller's usually would, so

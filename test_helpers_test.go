@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -12,6 +13,56 @@ import (
 // runner is an Acceptor or an Initiator.
 type runner interface {
 	Run(ctx context.Context) error
+	Ready() <-chan struct{}
+}
+
+// testSource is a SettingsSource whose Settings a test replaces, and which
+// fails with err while it is set. It counts how often it has been called.
+type testSource struct {
+	mu       sync.Mutex
+	settings *Settings
+	err      error
+	loads    int
+}
+
+func newTestSource(settings *Settings) *testSource {
+	return &testSource{settings: settings}
+}
+
+func (s *testSource) load(context.Context) (*Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loads++
+	return s.settings, s.err
+}
+
+func (s *testSource) set(settings *Settings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settings = settings
+}
+
+func (s *testSource) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
+}
+
+func (s *testSource) loaded() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loads
+}
+
+// reloader is an Acceptor or an Initiator.
+type reloader interface {
+	Reload(ctx context.Context) error
+}
+
+// reloadWith makes source return settings, then reloads r from it.
+func reloadWith(r reloader, source *testSource, settings *Settings) error {
+	source.set(settings)
+	return r.Reload(context.Background())
 }
 
 // running is a runner whose Run was called by runForTest.
@@ -57,10 +108,10 @@ func runForTest(t *testing.T, r runner) *running {
 	return run
 }
 
-// startForTest runs a as runForTest does and returns once it is listening, or
+// startForTest runs a as runForTest does and returns once it is ready, or
 // with the error that stopped it starting. stop shuts it down early and waits
 // for Run to return; it may be called more than once.
-func startForTest(t *testing.T, a *Acceptor) (stop func(), err error) {
+func startForTest(t *testing.T, a runner) (stop func(), err error) {
 	t.Helper()
 	run := runForTest(t, a)
 	select {

@@ -52,50 +52,80 @@ func requireFiles(t *testing.T, dir string) {
 	assert.NotEmpty(t, entries, "%s should not be empty", dir)
 }
 
+// engine is an Acceptor or an Initiator.
+type engine interface {
+	Run(ctx context.Context) error
+	Ready() <-chan struct{}
+	Reload(ctx context.Context) error
+}
+
+// start runs e until the test ends, and returns once it is ready.
+func start(t *testing.T, e engine) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run returned %v", err)
+		}
+	})
+	select {
+	case <-e.Ready():
+	case err := <-done:
+		done <- err
+		t.Fatalf("Run returned %v", err)
+	}
+}
+
+// engines builds an acceptor and an initiator that use the file store and
+// file log.
+var engines = []struct {
+	name    string
+	session func(target string) map[string]string
+	create  func(source gofix.SettingsSource, registry *gofix.Registry) (engine, error)
+}{
+	{
+		name: "acceptor",
+		session: func(target string) map[string]string {
+			return map[string]string{config.SenderCompID: "SERVER", config.TargetCompID: target, config.SocketAcceptPort: "5131"}
+		},
+		create: func(source gofix.SettingsSource, registry *gofix.Registry) (engine, error) {
+			return gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), source, filelog.NewLogFactory(), gofix.WithRegistry(registry))
+		},
+	},
+	{
+		name: "initiator",
+		session: func(target string) map[string]string {
+			return map[string]string{config.SenderCompID: "CLIENT", config.TargetCompID: target,
+				config.SocketConnectHost: "127.0.0.1", config.SocketConnectPort: "5131"}
+		},
+		create: func(source gofix.SettingsSource, registry *gofix.Registry) (engine, error) {
+			return gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), source, filelog.NewLogFactory(), gofix.WithRegistry(registry))
+		},
+	},
+}
+
 // TestReloadAddsSessionWithFileStoreAndLog checks that a session added by
 // Reload gets a file store and file log, although the factories were built
 // before it existed.
 func TestReloadAddsSessionWithFileStoreAndLog(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		session func(target string) map[string]string
-		reload  func(t *testing.T, settings *gofix.Settings, registry *gofix.Registry) func(context.Context, *gofix.Settings) error
-	}{
-		{
-			name: "acceptor",
-			session: func(target string) map[string]string {
-				return map[string]string{config.SenderCompID: "SERVER", config.TargetCompID: target, config.SocketAcceptPort: "5131"}
-			},
-			reload: func(t *testing.T, settings *gofix.Settings, registry *gofix.Registry) func(context.Context, *gofix.Settings) error {
-				acceptor, err := gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory(), gofix.WithRegistry(registry))
-				require.NoError(t, err)
-				return acceptor.Reload
-			},
-		},
-		{
-			name: "initiator",
-			session: func(target string) map[string]string {
-				return map[string]string{config.SenderCompID: "CLIENT", config.TargetCompID: target,
-					config.SocketConnectHost: "127.0.0.1", config.SocketConnectPort: "5131"}
-			},
-			reload: func(t *testing.T, settings *gofix.Settings, registry *gofix.Registry) func(context.Context, *gofix.Settings) error {
-				initiator, err := gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory(), gofix.WithRegistry(registry))
-				require.NoError(t, err)
-				return initiator.Reload
-			},
-		},
-	} {
+	for _, tc := range engines {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			registry := gofix.NewRegistry()
-			reload := tc.reload(t, fileSettings(t, dir, nil, tc.session("A")), registry)
+			settings := fileSettings(t, dir, nil, tc.session("A"))
+			source := func(context.Context) (*gofix.Settings, error) { return settings, nil }
+			e, err := tc.create(source, registry)
+			require.NoError(t, err)
+			start(t, e)
 
-			// Reload before Run builds and registers the new session without
-			// connecting it.
-			require.NoError(t, reload(context.Background(), fileSettings(t, dir, nil, tc.session("A"), tc.session("B"))))
+			settings = fileSettings(t, dir, nil, tc.session("A"), tc.session("B"))
+			require.NoError(t, e.Reload(context.Background()))
 
 			sender := tc.session("B")[config.SenderCompID]
-			_, err := registry.GetMessageStore(gofix.SessionID{BeginString: gofix.BeginStringFIX42, SenderCompID: sender, TargetCompID: "B"})
+			_, err = registry.GetMessageStore(gofix.SessionID{BeginString: gofix.BeginStringFIX42, SenderCompID: sender, TargetCompID: "B"})
 			require.NoError(t, err)
 			requireFiles(t, filepath.Join(dir, "B", "store"))
 			requireFiles(t, filepath.Join(dir, "B", "log"))
@@ -103,36 +133,19 @@ func TestReloadAddsSessionWithFileStoreAndLog(t *testing.T) {
 	}
 }
 
-// TestEngineCreatesGlobalLogFromGlobalSettings checks that the engine passes
-// its global settings to LogFactory.Create, so that the file log writes the
-// global log to the global FileLogPath.
+// TestEngineCreatesGlobalLogFromGlobalSettings checks that Run passes the
+// global settings it loaded to LogFactory.Create, so that the file log writes
+// the global log to the global FileLogPath, and that the constructor creates
+// no log.
 func TestEngineCreatesGlobalLogFromGlobalSettings(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		session map[string]string
-		create  func(*gofix.Settings) error
-	}{
-		{
-			name:    "acceptor",
-			session: map[string]string{config.SenderCompID: "SERVER", config.TargetCompID: "A", config.SocketAcceptPort: "5131"},
-			create: func(settings *gofix.Settings) error {
-				_, err := gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory())
-				return err
-			},
-		},
-		{
-			name: "initiator",
-			session: map[string]string{config.SenderCompID: "CLIENT", config.TargetCompID: "A",
-				config.SocketConnectHost: "127.0.0.1", config.SocketConnectPort: "5131"},
-			create: func(settings *gofix.Settings) error {
-				_, err := gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory())
-				return err
-			},
-		},
-	} {
+	for _, tc := range engines {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			require.NoError(t, tc.create(fileSettings(t, dir, nil, tc.session)))
+			e, err := tc.create(gofix.StaticSettings(fileSettings(t, dir, nil, tc.session("A"))), gofix.NewRegistry())
+			require.NoError(t, err)
+			assert.NoDirExists(t, filepath.Join(dir, "global"))
+
+			start(t, e)
 			assert.FileExists(t, filepath.Join(dir, "global", "GLOBAL.event.current.log"))
 		})
 	}

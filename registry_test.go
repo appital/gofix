@@ -54,7 +54,10 @@ func TestRegistry_PackageFunctionsUseDefaultRegistry(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func registryTestSettings(initiator bool) *Settings {
+// registryTestSettings returns a source of settings for one session, which
+// does not connect: nothing listens on the initiator's port, and the
+// acceptor listens on another.
+func registryTestSettings(initiator bool) SettingsSource {
 	settings := NewSettings()
 	sessionSettings := NewSessionSettings()
 	sessionSettings.Set(config.BeginString, registryTestSessionID.BeginString)
@@ -64,11 +67,13 @@ func registryTestSettings(initiator bool) *Settings {
 		sessionSettings.Set(config.HeartBtInt, "30")
 		sessionSettings.Set(config.SocketConnectHost, "127.0.0.1")
 		sessionSettings.Set(config.SocketConnectPort, "5001")
+	} else {
+		sessionSettings.Set(config.SocketAcceptPort, "5139")
 	}
 	if _, err := settings.AddSession(sessionSettings); err != nil {
 		panic(err)
 	}
-	return settings
+	return StaticSettings(settings)
 }
 
 func TestRegistry_AcceptorAndInitiatorWithSameSessionID(t *testing.T) {
@@ -83,6 +88,16 @@ func TestRegistry_AcceptorAndInitiatorWithSameSessionID(t *testing.T) {
 		WithRegistry(initiatorRegistry))
 	require.NoError(t, err)
 	assert.Same(t, initiatorRegistry, initiator.Registry())
+
+	// The sessions are created by Run, not by the constructors.
+	_, ok := acceptorRegistry.lookup(registryTestSessionID)
+	assert.False(t, ok)
+	_, ok = initiatorRegistry.lookup(registryTestSessionID)
+	assert.False(t, ok)
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
+	_, err = startForTest(t, initiator)
+	require.NoError(t, err)
 
 	acceptorSession, ok := acceptorRegistry.lookup(registryTestSessionID)
 	require.True(t, ok)
@@ -100,8 +115,11 @@ func TestRegistry_DefaultRegistryRejectsDuplicateSessionID(t *testing.T) {
 	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(false), NewNullLogFactory())
 	require.NoError(t, err)
 	assert.Same(t, DefaultRegistry(), acceptor.Registry())
-	t.Cleanup(func() { _ = UnregisterSession(registryTestSessionID) })
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
 
-	_, err = NewInitiator(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(true), NewNullLogFactory())
-	assert.Equal(t, errDuplicateSessionID, err)
+	initiator, err := NewInitiator(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(true), NewNullLogFactory())
+	require.NoError(t, err)
+	_, err = startForTest(t, initiator)
+	assert.ErrorIs(t, err, errDuplicateSessionID)
 }

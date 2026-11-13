@@ -14,8 +14,14 @@ import (
 	"github.com/appital/gofix/config"
 )
 
-// errReloadAfterRun is returned by Reload once Run has returned.
-var errReloadAfterRun = errors.New("cannot reload after Run has returned")
+var (
+	// errReloadBeforeRun is returned by Reload before Run has started the
+	// engine, which loads the settings itself.
+	errReloadBeforeRun = errors.New("cannot reload before Run has started")
+	// errReloadAfterRun is returned by Reload once Run has begun to shut
+	// down.
+	errReloadAfterRun = errors.New("cannot reload after Run has stopped")
+)
 
 // runState is where an Acceptor or Initiator is in its life, as far as
 // Reload is concerned.
@@ -80,8 +86,8 @@ var storeSettings = []string{
 	config.SQLStoreSessionsTableName,
 }
 
-// sessionChanges is what Reload must do to bring an engine's sessions in line
-// with new settings. Each map holds the effective settings of the sessions
+// sessionChanges is what Run or Reload must do to bring an engine's sessions
+// in line with new settings. Each map holds the effective settings of the sessions
 // that need starting, keyed as Settings keys them.
 type sessionChanges struct {
 	added   map[SessionID]*SessionSettings

@@ -144,11 +144,11 @@ func main() {
 		appSettings.GlobalSettings().Set(config.FileStorePath, fileStorePath)
 		appSettings.GlobalSettings().Set(config.DynamicSessions, "Y")
 
-		acceptor, err = gofix.NewAcceptor(app, file.NewStoreFactory(), appSettings, fileLogFactory)
+		acceptor, err = gofix.NewAcceptor(app, file.NewStoreFactory(), gofix.StaticSettings(appSettings), fileLogFactory)
 	case "MEMORY":
 		fallthrough
 	default:
-		acceptor, err = gofix.NewAcceptor(app, gofix.NewMemoryStoreFactory(), appSettings, fileLogFactory)
+		acceptor, err = gofix.NewAcceptor(app, gofix.NewMemoryStoreFactory(), gofix.StaticSettings(appSettings), fileLogFactory)
 	}
 
 	if err != nil {

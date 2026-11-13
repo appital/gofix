@@ -68,7 +68,8 @@ func TestAcceptor_Start(t *testing.T) {
 				assert.Nil(t, err)
 			}
 
-			acceptor := &Acceptor{settings: tt.settings, sessionSettings: tt.settings.SessionSettings()}
+			acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(tt.settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
+			require.NoError(t, err)
 			if _, err := startForTest(t, acceptor); err != nil {
 				assert.NotNil(t, err)
 			}
@@ -101,9 +102,8 @@ func TestAcceptor_SetTLSConfig(t *testing.T) {
 	_, err := genericSettings.AddSession(sessionSettings)
 	require.NoError(t, err)
 
-	logger, err := NewNullLogFactory().Create(nil)
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(genericSettings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
-	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -142,9 +142,8 @@ func TestAcceptor_SetCallback(t *testing.T) {
 	_, err := genericSettings.AddSession(sessionSettings)
 	require.NoError(t, err)
 
-	logger, err := NewNullLogFactory().Create(nil)
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(genericSettings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
-	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -209,7 +208,7 @@ func TestAcceptor_TCPProxy(t *testing.T) {
 		sessionID, err := settings.AddSession(sessionSettings)
 		require.NoError(t, err)
 
-		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
+		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory())
 		require.NoError(t, err)
 		_, err = startForTest(t, acceptor)
 		require.NoError(t, err)
@@ -269,7 +268,7 @@ func startDynamicAcceptor(t *testing.T) (*Acceptor, func()) {
 	_, err := settings.AddSession(sessionSettings)
 	require.NoError(t, err)
 
-	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory())
 	require.NoError(t, err)
 	stop, err := startForTest(t, acceptor)
 	require.NoError(t, err)
@@ -423,7 +422,7 @@ func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {
 	require.NoError(t, err)
 
 	stores := &recordingStoreFactory{}
-	acceptor, err := NewAcceptor(&benchApp{}, stores, settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	acceptor, err := NewAcceptor(&benchApp{}, stores, StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
@@ -459,7 +458,7 @@ func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {
 	}
 }
 
-func TestNewAcceptor_MessageSizeAndReadTimeoutSettings(t *testing.T) {
+func TestAcceptor_MessageSizeAndReadTimeoutSettings(t *testing.T) {
 	tests := []struct {
 		setting string
 		value   string
@@ -482,7 +481,9 @@ func TestNewAcceptor_MessageSizeAndReadTimeoutSettings(t *testing.T) {
 			settings.GlobalSettings().Set(config.SocketAcceptPort, "5003")
 			settings.GlobalSettings().Set(test.setting, test.value)
 
-			_, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory())
+			acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory())
+			require.NoError(t, err)
+			_, err = startForTest(t, acceptor)
 			if test.valid {
 				require.NoError(t, err)
 			} else {
@@ -528,7 +529,7 @@ func TestAcceptor_FirstMessageLimits(t *testing.T) {
 		sessionID, err := settings.AddSession(sessionSettings)
 		require.NoError(t, err)
 
-		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+		acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), WithRegistry(NewRegistry()))
 		require.NoError(t, err)
 		_, err = startForTest(t, acceptor)
 		require.NoError(t, err)
@@ -612,7 +613,7 @@ func TestAcceptor_DisconnectsPeerThatStopsReading(t *testing.T) {
 	require.NoError(t, err)
 
 	log := &textLog{}
-	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), settings, textLogFactory{log}, WithRegistry(NewRegistry()))
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), textLogFactory{log}, WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	stop, err := startForTest(t, acceptor)
 	require.NoError(t, err)

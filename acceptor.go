@@ -39,6 +39,7 @@ import (
 // Acceptor accepts connections from FIX clients and manages the associated sessions.
 type Acceptor struct {
 	app                   Application
+	source                SettingsSource
 	settings              *Settings
 	logFactory            LogFactory
 	storeFactory          MessageStoreFactory
@@ -60,6 +61,7 @@ type Acceptor struct {
 	listeners             map[string]net.Listener
 	connectionValidator   ConnectionValidator
 	tlsConfig             *tls.Config
+	customTLSConfig       *tls.Config
 	newListenerCallback   NewListenerCallback
 	maxMessageSize        int
 	firstMessageTimeout   time.Duration
@@ -88,10 +90,13 @@ type ConnectionValidator interface {
 // NewListenerCallback is a function that returns a net.Listener for the given address and tls.Config struct.
 type NewListenerCallback func(address string, tlsConfig *tls.Config) (net.Listener, error)
 
-// Run accepts connections until ctx is done, then stops accepting, logs out
-// its sessions, closes their connections and returns. It returns nil once it
-// has shut down because ctx is done, or the error that stopped it starting, in
-// which case nothing is left running and Run may be called again.
+// Run loads the acceptor's settings from its SettingsSource, creates and
+// registers the sessions in them, and accepts connections until ctx is done.
+// It then stops accepting, logs out its sessions, closes their connections and
+// returns. It returns nil once it has shut down because ctx is done, or the
+// error that stopped it starting, such as the SettingsSource failing or a bad
+// setting, in which case nothing is left running or registered and Run may be
+// called again, which loads the settings again.
 //
 // Run returns ctx's error, starting nothing, if ctx is already done, and an
 // error if it is already running or has run. Ready is closed once the acceptor
@@ -117,9 +122,10 @@ func (a *Acceptor) Run(ctx context.Context) error {
 	return a.shutdown()
 }
 
-// Ready returns a channel that is closed once Run has started the acceptor
-// and it is listening on every port. It is never closed if Run fails to
-// start, so wait on it together with Run's result or its context:
+// Ready returns a channel that is closed once Run has loaded the settings,
+// registered the sessions in them and is listening on every port. It is never
+// closed if Run fails to start, so wait on it together with Run's result or
+// its context:
 //
 //	g, ctx := errgroup.WithContext(ctx)
 //	g.Go(func() error { return acceptor.Run(ctx) })
@@ -137,47 +143,23 @@ func (a *Acceptor) readyChan() chan struct{} {
 	return a.ready
 }
 
-// start opens the listeners and starts the sessions. If it fails, it closes
-// the listeners it opened and starts nothing.
-func (a *Acceptor) start(ctx context.Context) (err error) {
-	defer func() {
-		if err == nil {
-			return
-		}
-		for _, listener := range a.listeners {
-			if listener != nil {
-				listener.Close()
-			}
-		}
-	}()
-
-	a.socketAcceptHost = ""
-	if a.settings.GlobalSettings().HasSetting(config.SocketAcceptHost) {
-		if a.socketAcceptHost, err = a.settings.GlobalSettings().Setting(config.SocketAcceptHost); err != nil {
-			return
-		}
+// start loads the settings, creates the global log, and opens the listeners
+// for and starts the sessions in the settings. If it fails, nothing is left
+// open, registered or running.
+func (a *Acceptor) start(ctx context.Context) error {
+	settings, err := a.source.load(ctx)
+	if err != nil {
+		return err
 	}
-
-	a.sessionHostPort = make(map[SessionID]int)
-	a.listeners = make(map[string]net.Listener)
-	for sessionID, sessionSettings := range a.sessionSettings {
-		if sessionSettings.HasSetting(config.SocketAcceptPort) {
-			if a.sessionHostPort[sessionID], err = sessionSettings.IntSetting(config.SocketAcceptPort); err != nil {
-				return
-			}
-		} else if a.sessionHostPort[sessionID], err = a.settings.GlobalSettings().IntSetting(config.SocketAcceptPort); err != nil {
-			return
-		}
-		a.listeners[a.listenAddress(a.sessionHostPort[sessionID])] = nil
+	global := settings.GlobalSettings()
+	if err := a.loadEngineSettings(global); err != nil {
+		return err
 	}
-
-	if a.tlsConfig == nil {
-		var tlsConfig *tls.Config
-		if tlsConfig, err = loadTLSConfig(a.settings.GlobalSettings()); err != nil {
-			return
-		}
-		a.tlsConfig = tlsConfig
+	globalLog, err := a.createGlobalLog(global)
+	if err != nil {
+		return err
 	}
+	a.globalLog = globalLog
 
 	if a.newListenerCallback == nil {
 		a.newListenerCallback = func(address string, tlsConfig *tls.Config) (net.Listener, error) {
@@ -188,33 +170,97 @@ func (a *Acceptor) start(ctx context.Context) (err error) {
 		}
 	}
 
-	a.useTCPProxy = false
-	if a.settings.GlobalSettings().HasSetting(config.UseTCPProxy) {
-		if a.useTCPProxy, err = a.settings.GlobalSettings().BoolSetting(config.UseTCPProxy); err != nil {
-			return
-		}
-	}
-
-	for address := range a.listeners {
-		if a.listeners[address], err = a.openListener(address); err != nil {
-			return
-		}
-	}
-
 	a.stopCtx = ctx
-	for _, s := range a.sessions {
-		a.sessionGroup.Go(s.run)
-	}
 	if a.dynamicSessions {
 		a.dynamicSessionChan = make(chan *session)
+	}
+	// No session is running yet, so apply either fails having changed
+	// nothing or starts every session.
+	if err := a.apply(ctx, settings); err != nil {
+		_ = closeLog(globalLog)
+		return err
+	}
+	if a.dynamicSessions {
 		a.sessionGroup.Go(a.dynamicSessionsLoop)
 	}
-	for _, listener := range a.listeners {
-		a.listenerShutdown.Go(func() {
-			a.listenForConnections(listener)
-		})
+	return nil
+}
+
+// loadEngineSettings reads the settings the acceptor reads once, rather than
+// for each session, from its global settings. They are listed in
+// acceptorEngineSettings.
+func (a *Acceptor) loadEngineSettings(global *SessionSettings) (err error) {
+	a.maxMessageSize = defaultMaxMessageSize
+	if global.HasSetting(config.MaxMessageSize) {
+		if a.maxMessageSize, err = global.IntSetting(config.MaxMessageSize); err != nil {
+			return
+		}
+		if a.maxMessageSize <= 0 {
+			return errors.New("MaxMessageSize must be greater than zero")
+		}
 	}
-	return
+
+	a.firstMessageTimeout = defaultFirstMessageTimeout
+	if global.HasSetting(config.SocketReadTimeout) {
+		if a.firstMessageTimeout, err = global.DurationSetting(config.SocketReadTimeout); err != nil {
+			timeout, intErr := global.IntSetting(config.SocketReadTimeout)
+			if intErr != nil {
+				return intErr
+			}
+			a.firstMessageTimeout = time.Duration(timeout) * time.Second
+		}
+		if a.firstMessageTimeout <= 0 {
+			return errors.New("SocketReadTimeout must be greater than zero")
+		}
+	}
+
+	a.dynamicSessions, a.dynamicQualifier = false, false
+	if global.HasSetting(config.DynamicSessions) {
+		if a.dynamicSessions, err = global.BoolSetting(config.DynamicSessions); err != nil {
+			return
+		}
+
+		if global.HasSetting(config.DynamicQualifier) {
+			if a.dynamicQualifier, err = global.BoolSetting(config.DynamicQualifier); err != nil {
+				return
+			}
+		}
+	}
+
+	a.socketAcceptHost = ""
+	if global.HasSetting(config.SocketAcceptHost) {
+		if a.socketAcceptHost, err = global.Setting(config.SocketAcceptHost); err != nil {
+			return
+		}
+	}
+
+	a.useTCPProxy = false
+	if global.HasSetting(config.UseTCPProxy) {
+		if a.useTCPProxy, err = global.BoolSetting(config.UseTCPProxy); err != nil {
+			return
+		}
+	}
+
+	a.tlsConfig = a.customTLSConfig
+	if a.tlsConfig == nil {
+		if a.tlsConfig, err = loadTLSConfig(global); err != nil {
+			return
+		}
+	}
+	return nil
+}
+
+// createGlobalLog creates the acceptor's global log from its global settings.
+func (a *Acceptor) createGlobalLog(global *SessionSettings) (Log, error) {
+	globalRedactor, err := redactorFromSettings(global)
+	if err != nil {
+		return nil, err
+	}
+	globalLog, err := a.logFactory.Create(global)
+	if err != nil {
+		return nil, err
+	}
+	return newRedactingLog(globalLog, globalRedactor), nil
 }
 
 // listenAddress is the address the acceptor listens on for sessions using
@@ -277,60 +323,75 @@ func (a *Acceptor) Registry() *Registry {
 	return a.reg()
 }
 
-// Reload brings the acceptor's sessions in line with settings. It compares
-// each session's effective settings, its global settings with its own on top,
-// with those of the session that is running:
+// Reload loads settings from the acceptor's SettingsSource and brings its
+// sessions in line with them. It compares each session's effective settings,
+// its global settings with its own on top, with those of the session that is
+// running:
 //
-//   - A session only in settings is created, registered and started. A
-//     listener is opened for its port if no other session uses it.
-//   - A session not in settings is logged out, disconnected and unregistered.
-//     Its listener is closed if no session uses it any more, unless
-//     DynamicSessions is set. Its store is closed but not reset, and its log
-//     is closed.
+//   - A session only in the new settings is created, registered and started.
+//     A listener is opened for its port if no other session uses it.
+//   - A session not in the new settings is logged out, disconnected and
+//     unregistered. Its listener is closed if no session uses it any more,
+//     unless DynamicSessions is set. Its store is closed but not reset, and
+//     its log is closed.
 //   - A session whose settings differ is stopped as if it had been removed,
 //     then started with the new settings. It keeps its store, so its sequence
 //     numbers carry over, and Reload returns an error and changes nothing if
-//     settings changes its FileStore or SQLStore settings. To give a session
-//     a new store, remove it with one Reload and add it with the next.
+//     the new settings change its FileStore or SQLStore settings. To give a
+//     session a new store, remove it with one Reload and add it with the next.
 //   - A session whose settings are the same is left alone and stays
 //     connected.
 //
 // Every new and changed session is built, every new listener opened and every
-// new session registered before anything is stopped. If any of that fails,
-// Reload returns the error and the acceptor is left as it was. If a restarted
-// session cannot be registered again once the session it replaces has
-// stopped, Reload leaves it stopped, returns the error, and starts it on the
-// next Reload. Reload also returns an error and changes
-// nothing if settings changes a global setting that the acceptor reads once
-// rather than for each session, such as SocketAcceptHost, UseTCPProxy,
+// new session registered before anything is stopped. If the SettingsSource or
+// any of that fails, Reload returns the error and the acceptor is left as it
+// was. If a restarted session cannot be registered again once the session it
+// replaces has stopped, Reload leaves it stopped, returns the error, and
+// starts it on the next Reload. Reload also returns an error and changes
+// nothing if the new settings change a global setting that the acceptor reads
+// once rather than for each session, such as SocketAcceptHost, UseTCPProxy,
 // MaxMessageSize, SocketReadTimeout, DynamicSessions or the TLS settings. To
 // change those, stop the acceptor and run a new one.
 //
-// ctx limits how long Reload waits for sessions to log out. Once it is done,
-// the sessions still logging out are disconnected without waiting further,
-// and Reload returns ctx's error having still applied every change.
+// ctx is passed to the SettingsSource, and limits how long Reload waits for
+// sessions to log out. Once it is done, the sessions still logging out are
+// disconnected without waiting further, and Reload returns ctx's error having
+// still applied every change.
 //
-// Calls to Reload run one at a time. Called before Run, Reload replaces the
-// settings Run will use. Called once Run has returned, it returns an error. A
-// failed Reload does not stop Run.
+// Calls to Reload run one at a time. Reload returns an error, without calling
+// the SettingsSource, before Run has started the acceptor, since Run loads the
+// settings itself, and once Run has begun to shut down. A failed Reload does
+// not stop Run.
 //
-// Sessions created by DynamicSessions are not in settings, and are left
+// Sessions created by DynamicSessions are not in the settings, and are left
 // alone. Sessions created after Reload take its global settings. They can log
 // on through any of the acceptor's ports, so with DynamicSessions Reload never
 // closes a listener.
-//
-// The acceptor keeps settings, which must not be changed afterwards.
-func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
+func (a *Acceptor) Reload(ctx context.Context) error {
 	a.reloadMu.Lock()
 	defer a.reloadMu.Unlock()
 
-	if a.runState == runFinished {
+	switch a.runState {
+	case runNotStarted:
+		return errReloadBeforeRun
+	case runFinished:
 		return errReloadAfterRun
+	}
+
+	settings, err := a.source.load(ctx)
+	if err != nil {
+		return err
 	}
 	if err := checkUnchanged(a.settings.GlobalSettings(), settings.GlobalSettings(), acceptorEngineSettings); err != nil {
 		return err
 	}
+	return a.apply(ctx, settings)
+}
 
+// apply brings the acceptor's sessions and listeners in line with settings,
+// as Reload describes. Run calls it with no sessions running to start the
+// acceptor. The caller holds reloadMu.
+func (a *Acceptor) apply(ctx context.Context, settings *Settings) error {
 	nextSettings := settings.SessionSettings()
 	changes := diffSessions(a.sessionSettings, nextSettings)
 	if err := checkStoreSettings(a.sessionSettings, changes); err != nil {
@@ -361,28 +422,24 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 		return err
 	}
 
-	// Listeners are opened only once Run has started, which opens them
-	// itself.
 	opened := make(map[string]net.Listener)
-	if a.runState == runStarted {
-		for _, port := range hostPort {
-			address := a.listenAddress(port)
-			if _, ok := a.listeners[address]; ok {
-				continue
-			}
-			if _, ok := opened[address]; ok {
-				continue
-			}
-			listener, err := a.openListener(address)
-			if err != nil {
-				for _, l := range opened {
-					l.Close()
-				}
-				discardSessions(changes, built)
-				return err
-			}
-			opened[address] = listener
+	for _, port := range hostPort {
+		address := a.listenAddress(port)
+		if _, ok := a.listeners[address]; ok {
+			continue
 		}
+		if _, ok := opened[address]; ok {
+			continue
+		}
+		listener, err := a.openListener(address)
+		if err != nil {
+			for _, l := range opened {
+				l.Close()
+			}
+			discardSessions(changes, built)
+			return err
+		}
+		opened[address] = listener
 	}
 
 	if err := registerAdded(a.reg(), changes, built); err != nil {
@@ -404,14 +461,12 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 	}
 
 	var errs []error
-	if a.runState == runStarted {
-		stopping := make([]stoppingSession, 0, len(old))
-		for _, s := range old {
-			s.stop()
-			stopping = append(stopping, stoppingSession{session: s, done: s.done})
-		}
-		errs = append(errs, waitStopped(ctx, stopping))
+	stopping := make([]stoppingSession, 0, len(old))
+	for _, s := range old {
+		s.stop()
+		stopping = append(stopping, stoppingSession{session: s, done: s.done})
 	}
+	errs = append(errs, waitStopped(ctx, stopping))
 	for _, s := range old {
 		if err := a.reg().UnregisterSession(s.sessionID); err != nil {
 			errs = append(errs, fmt.Errorf("unregistering session %v: %w", s.sessionID, err))
@@ -443,28 +498,26 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 	a.sessionSettings = nextSettings
 	a.mu.Unlock()
 
-	if a.runState == runStarted {
-		for _, s := range built {
-			a.sessionGroup.Go(s.run)
+	for _, s := range built {
+		a.sessionGroup.Go(s.run)
+	}
+	for address, listener := range opened {
+		a.listeners[address] = listener
+		a.listenerShutdown.Go(func() {
+			a.listenForConnections(listener)
+		})
+	}
+	// Dynamic sessions can log on through any of the acceptor's ports, so
+	// none is closed while they are enabled.
+	if !a.dynamicSessions {
+		inUse := make(map[string]bool, len(hostPort))
+		for _, port := range hostPort {
+			inUse[a.listenAddress(port)] = true
 		}
-		for address, listener := range opened {
-			a.listeners[address] = listener
-			a.listenerShutdown.Go(func() {
-				a.listenForConnections(listener)
-			})
-		}
-		// Dynamic sessions can log on through any of the acceptor's ports,
-		// so none is closed while they are enabled.
-		if !a.dynamicSessions {
-			inUse := make(map[string]bool, len(hostPort))
-			for _, port := range hostPort {
-				inUse[a.listenAddress(port)] = true
-			}
-			for address, listener := range a.listeners {
-				if !inUse[address] {
-					listener.Close()
-					delete(a.listeners, address)
-				}
+		for address, listener := range a.listeners {
+			if !inUse[address] {
+				listener.Close()
+				delete(a.listeners, address)
 			}
 		}
 	}
@@ -482,7 +535,7 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 		}
 	}
 
-	a.globalLog.OnEventf("Reloaded settings: %d sessions added, %d removed, %d restarted",
+	a.globalLog.OnEventf("Applied settings: %d sessions added, %d removed, %d restarted",
 		len(changes.added), len(changes.removed), len(changes.changed))
 	return errors.Join(errs...)
 }
@@ -493,20 +546,24 @@ func acceptorKey(sessionID SessionID) SessionID {
 	return sessionID
 }
 
-// NewAcceptor creates and initializes a new Acceptor. It returns an error if
-// app has an optional callback method that would never be called; see
-// Application.
-func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Settings, logFactory LogFactory, opts ...Option) (a *Acceptor, err error) {
-	if err = checkApplication(app); err != nil {
+// NewAcceptor creates a new Acceptor, which loads its settings from settings
+// when it is Run; use StaticSettings for settings that are already loaded.
+// NewAcceptor does not call settings, and creates no sessions: Run creates and
+// registers them. It returns an error if settings is nil, or if app has an
+// optional callback method that would never be called; see Application.
+func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings SettingsSource, logFactory LogFactory, opts ...Option) (*Acceptor, error) {
+	if err := checkApplication(app); err != nil {
 		return nil, err
+	}
+	if settings == nil {
+		return nil, errNilSettingsSource
 	}
 
 	o := newOptions(opts)
-	a = &Acceptor{
+	return &Acceptor{
 		app:             app,
 		storeFactory:    storeFactory,
-		settings:        settings,
-		sessionSettings: settings.SessionSettings(),
+		source:          settings,
 		logFactory:      logFactory,
 		sessions:        make(map[SessionID]*session),
 		sessionHostPort: make(map[SessionID]int),
@@ -514,64 +571,13 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		sessionFactory:  sessionFactory{registry: o.registry, metricsFactory: o.metricsFactory},
 
 		maxMessageSize:      defaultMaxMessageSize,
-		firstMessageTimeout: 30 * time.Second,
-	}
-	if settings.GlobalSettings().HasSetting(config.MaxMessageSize) {
-		if a.maxMessageSize, err = settings.GlobalSettings().IntSetting(config.MaxMessageSize); err != nil {
-			return
-		}
-		if a.maxMessageSize <= 0 {
-			return nil, errors.New("MaxMessageSize must be greater than zero")
-		}
-	}
-	if settings.GlobalSettings().HasSetting(config.SocketReadTimeout) {
-		if a.firstMessageTimeout, err = settings.GlobalSettings().DurationSetting(config.SocketReadTimeout); err != nil {
-			timeout, intErr := settings.GlobalSettings().IntSetting(config.SocketReadTimeout)
-			if intErr != nil {
-				return nil, intErr
-			}
-			a.firstMessageTimeout = time.Duration(timeout) * time.Second
-		}
-		if a.firstMessageTimeout <= 0 {
-			return nil, errors.New("SocketReadTimeout must be greater than zero")
-		}
-	}
-	if a.settings.GlobalSettings().HasSetting(config.DynamicSessions) {
-		if a.dynamicSessions, err = settings.globalSettings.BoolSetting(config.DynamicSessions); err != nil {
-			return
-		}
-
-		if a.settings.GlobalSettings().HasSetting(config.DynamicQualifier) {
-			if a.dynamicQualifier, err = settings.globalSettings.BoolSetting(config.DynamicQualifier); err != nil {
-				return
-			}
-		}
-	}
-
-	if a.globalLog, err = logFactory.Create(settings.GlobalSettings()); err != nil {
-		return
-	}
-	globalRedactor, err := redactorFromSettings(settings.GlobalSettings())
-	if err != nil {
-		return nil, err
-	}
-	a.globalLog = newRedactingLog(a.globalLog, globalRedactor)
-
-	for sessionID, sessionSettings := range settings.SessionSettings() {
-		sessID := sessionID
-		sessID.Qualifier = ""
-
-		if _, dup := a.sessions[sessID]; dup {
-			return a, errDuplicateSessionID
-		}
-
-		if a.sessions[sessID], err = a.createSession(sessionID, storeFactory, sessionSettings, logFactory, app); err != nil {
-			return
-		}
-	}
-
-	return
+		firstMessageTimeout: defaultFirstMessageTimeout,
+	}, nil
 }
+
+// defaultFirstMessageTimeout is how long an acceptor waits for the first
+// message on a connection unless SocketReadTimeout says otherwise.
+const defaultFirstMessageTimeout = 30 * time.Second
 
 func (a *Acceptor) listenForConnections(listener net.Listener) {
 	for {
@@ -849,7 +855,7 @@ func (a *Acceptor) SetConnectionValidator(validator ConnectionValidator) {
 // it takes precendent over TLS settings specified in the acceptor's settings.GlobalSettings(),
 // meaning that the `settings.GlobalSettings()` object is not inspected or used for the creation of the tls.Config.
 func (a *Acceptor) SetTLSConfig(tlsConfig *tls.Config) {
-	a.tlsConfig = tlsConfig
+	a.customTLSConfig = tlsConfig
 }
 
 // SetNewListenerCallback allows the creator of the Acceptor to specify the callback used to create each net.Listener

@@ -23,25 +23,31 @@ func TestWithMetrics(t *testing.T) {
 		factory := &recordingMetricsFactory{created: map[SessionID]*recordingMetrics{}}
 		opts := []Option{WithRegistry(registry), WithMetrics(factory)}
 
+		var engine runner
 		var err error
 		if initiator {
-			_, err = NewInitiator(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(true), NewNullLogFactory(), opts...)
+			engine, err = NewInitiator(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(true), NewNullLogFactory(), opts...)
 		} else {
-			_, err = NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(false), NewNullLogFactory(), opts...)
+			engine, err = NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(false), NewNullLogFactory(), opts...)
 		}
+		require.NoError(t, err)
+		stop, err := startForTest(t, engine)
 		require.NoError(t, err)
 
 		session, ok := registry.lookup(registryTestSessionID)
 		require.True(t, ok)
 		require.Contains(t, factory.created, registryTestSessionID)
 		assert.Same(t, factory.created[registryTestSessionID], session.metrics)
+		stop()
 	}
 }
 
 func TestWithoutMetrics(t *testing.T) {
 	registry := NewRegistry()
-	_, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(false), NewNullLogFactory(),
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), registryTestSettings(false), NewNullLogFactory(),
 		WithRegistry(registry))
+	require.NoError(t, err)
+	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
 	session, ok := registry.lookup(registryTestSessionID)

@@ -121,6 +121,24 @@ func initiatorSession(client string, port int, extra ...string) map[string]strin
 	return s
 }
 
+// engine is an Acceptor or an Initiator.
+type engine interface {
+	runner
+	reloader
+}
+
+// startReloadable runs e, which loads its settings from source, and returns
+// a function that reloads it with new settings.
+func startReloadable(t *testing.T, e engine, source *testSource) func(context.Context, *Settings) error {
+	t.Helper()
+	_, err := startForTest(t, e)
+	require.NoError(t, err)
+	return func(ctx context.Context, settings *Settings) error {
+		source.set(settings)
+		return e.Reload(ctx)
+	}
+}
+
 func serverSessionID(client string) SessionID {
 	return SessionID{BeginString: BeginStringFIX42, SenderCompID: "SERVER", TargetCompID: client}
 }
@@ -185,23 +203,21 @@ func TestAcceptorReload(t *testing.T) {
 	acceptorApp, initiatorApp := newReloadApp(), newReloadApp()
 	registry := NewRegistry()
 
-	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA)),
-		NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA)))
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
 	initiator, err := NewInitiator(initiatorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", portA), initiatorSession("B", portB)),
+		StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", portA), initiatorSession("B", portB))),
 		NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	runForTest(t, initiator)
 	acceptorApp.waitLogons(t, "A", 1)
 
 	// Adding B opens a listener on its port, and B connects.
-	require.NoError(t, acceptor.Reload(context.Background(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA), acceptorSession("B", portB))))
+	require.NoError(t, reloadWith(acceptor, source, reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA), acceptorSession("B", portB))))
 	acceptorApp.waitLogons(t, "B", 1)
 	_, err = registry.GetExpectedSenderNum(serverSessionID("B"))
 	require.NoError(t, err, "B should be registered")
@@ -210,8 +226,7 @@ func TestAcceptorReload(t *testing.T) {
 	seqNum, err := registry.GetExpectedSenderNum(serverSessionID("A"))
 	require.NoError(t, err)
 	require.Greater(t, seqNum, 1)
-	require.NoError(t, acceptor.Reload(context.Background(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA, config.LogonTimeout, "20"), acceptorSession("B", portB))))
+	require.NoError(t, reloadWith(acceptor, source, reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA, config.LogonTimeout, "20"), acceptorSession("B", portB))))
 	acceptorApp.waitLogouts(t, "A", 1)
 	acceptorApp.waitLogons(t, "A", 2)
 	restartedSeqNum, err := registry.GetExpectedSenderNum(serverSessionID("A"))
@@ -219,8 +234,7 @@ func TestAcceptorReload(t *testing.T) {
 	assert.Greater(t, restartedSeqNum, seqNum, "A's sequence numbers should carry over")
 
 	// Removing B logs it out, unregisters it and closes its listener.
-	require.NoError(t, acceptor.Reload(context.Background(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA, config.LogonTimeout, "20"))))
+	require.NoError(t, reloadWith(acceptor, source, reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA, config.LogonTimeout, "20"))))
 	_, logouts := acceptorApp.counts("B")
 	assert.Equal(t, 1, logouts)
 	_, err = registry.GetExpectedSenderNum(serverSessionID("B"))
@@ -244,13 +258,14 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 	registry := NewRegistry()
 
 	current := reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", portA))
-	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), current, NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(current)
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
 	initiator, err := NewInitiator(initiatorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", portA)),
+		StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", portA))),
 		NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	runForTest(t, initiator)
@@ -261,6 +276,7 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 	t.Cleanup(func() { busy.Close() })
 
 	for name, settings := range map[string]*Settings{
+		"no settings": nil,
 		"bad setting on a new session": reloadSettings(t, reloadAcceptorGlobal,
 			acceptorSession("A", portA, config.LogonTimeout, "20"),
 			acceptorSession("B", portB, config.ValidateFieldsOutOfOrder, "maybe")),
@@ -281,7 +297,9 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 			require.NoError(t, registry.register(other))
 			defer func() { _ = registry.UnregisterSession(other.sessionID) }()
 
-			require.Error(t, acceptor.Reload(context.Background(), settings))
+			loads := source.loaded()
+			require.Error(t, reloadWith(acceptor, source, settings))
+			assert.Equal(t, loads+1, source.loaded(), "Reload should load the settings once")
 
 			_, err := registry.GetExpectedSenderNum(serverSessionID("B"))
 			assert.ErrorIs(t, err, errUnknownSession, "B should not be registered")
@@ -299,7 +317,7 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 	acceptor.mu.RUnlock()
 
 	// The acceptor still reloads once the settings are good.
-	require.NoError(t, acceptor.Reload(context.Background(), current))
+	require.NoError(t, reloadWith(acceptor, source, current))
 }
 
 // TestAcceptorReloadContextDisconnects checks that once Reload's context is
@@ -309,9 +327,8 @@ func TestAcceptorReloadContextDisconnects(t *testing.T) {
 	const port = 5125
 	registry := NewRegistry()
 	acceptorApp := newReloadApp()
-	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port, config.LogoutTimeout, "30")),
-		NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port, config.LogoutTimeout, "30")))
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
@@ -334,7 +351,8 @@ func TestAcceptorReloadContextDisconnects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err = acceptor.Reload(ctx, reloadSettings(t, reloadAcceptorGlobal, acceptorSession("B", port)))
+	source.set(reloadSettings(t, reloadAcceptorGlobal, acceptorSession("B", port)))
+	err = acceptor.Reload(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, time.Since(start), 5*time.Second)
 
@@ -351,30 +369,19 @@ func TestAcceptorReloadContextDisconnects(t *testing.T) {
 	require.NoError(t, err, "the rest of the change should still be applied")
 }
 
-// TestAcceptorReloadBeforeRun checks that Reload before Run replaces the
-// sessions Run starts.
-func TestAcceptorReloadBeforeRun(t *testing.T) {
-	const port = 5126
-	registry := NewRegistry()
-	acceptor, err := NewAcceptor(newReloadApp(), NewMemoryStoreFactory(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(registry))
+// TestReloadBeforeRunFails checks that Reload before Run returns an error
+// without loading the settings, which Run loads itself.
+func TestReloadBeforeRunFails(t *testing.T) {
+	source := newTestSource(reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", 5126)))
+	acceptor, err := NewAcceptor(newReloadApp(), NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
+	require.ErrorIs(t, acceptor.Reload(context.Background()), errReloadBeforeRun)
 
-	require.NoError(t, acceptor.Reload(context.Background(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("B", port+1))))
-	_, err = registry.GetExpectedSenderNum(serverSessionID("A"))
-	require.ErrorIs(t, err, errUnknownSession)
-	_, err = registry.GetExpectedSenderNum(serverSessionID("B"))
+	initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
+	require.ErrorIs(t, initiator.Reload(context.Background()), errReloadBeforeRun)
 
-	_, err = startForTest(t, acceptor)
-	require.NoError(t, err)
-	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port+1))
-	require.NoError(t, err, "Run should listen on B's port")
-	conn.Close()
-	_, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	require.Error(t, err, "Run should not listen on A's port")
+	assert.Zero(t, source.loaded())
 }
 
 // hookStoreFactory creates memory stores, calling onCreate first, and counts
@@ -481,9 +488,10 @@ func TestReloadClosesSessionLogs(t *testing.T) {
 			session: func(client string, extra ...string) map[string]string { return acceptorSession(client, 5135, extra...) },
 			id:      serverSessionID,
 			reload: func(t *testing.T, stores MessageStoreFactory, settings *Settings, logs LogFactory, registry *Registry) func(context.Context, *Settings) error {
-				acceptor, err := NewAcceptor(newReloadApp(), stores, settings, logs, WithRegistry(registry))
+				source := newTestSource(settings)
+				acceptor, err := NewAcceptor(newReloadApp(), stores, source.load, logs, WithRegistry(registry))
 				require.NoError(t, err)
-				return acceptor.Reload
+				return startReloadable(t, acceptor, source)
 			},
 		},
 		{
@@ -494,9 +502,10 @@ func TestReloadClosesSessionLogs(t *testing.T) {
 			},
 			id: clientSessionID,
 			reload: func(t *testing.T, stores MessageStoreFactory, settings *Settings, logs LogFactory, registry *Registry) func(context.Context, *Settings) error {
-				initiator, err := NewInitiator(newReloadApp(), stores, settings, logs, WithRegistry(registry))
+				source := newTestSource(settings)
+				initiator, err := NewInitiator(newReloadApp(), stores, source.load, logs, WithRegistry(registry))
 				require.NoError(t, err)
-				return initiator.Reload
+				return startReloadable(t, initiator, source)
 			},
 		},
 	} {
@@ -566,9 +575,10 @@ func TestReloadRejectsStoreSettingsChange(t *testing.T) {
 			session: func(extra ...string) map[string]string { return acceptorSession("A", 5138, extra...) },
 			id:      serverSessionID("A"),
 			engine: func(t *testing.T, settings *Settings) (func(context.Context, *Settings) error, func() *session) {
-				acceptor, err := NewAcceptor(newReloadApp(), NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+				source := newTestSource(settings)
+				acceptor, err := NewAcceptor(newReloadApp(), NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
 				require.NoError(t, err)
-				return acceptor.Reload, func() *session { return acceptor.sessions[serverSessionID("A")] }
+				return startReloadable(t, acceptor, source), func() *session { return acceptor.sessions[serverSessionID("A")] }
 			},
 		},
 		{
@@ -577,9 +587,10 @@ func TestReloadRejectsStoreSettingsChange(t *testing.T) {
 			session: func(extra ...string) map[string]string { return initiatorSession("A", 5138, extra...) },
 			id:      clientSessionID("A"),
 			engine: func(t *testing.T, settings *Settings) (func(context.Context, *Settings) error, func() *session) {
-				initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+				source := newTestSource(settings)
+				initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
 				require.NoError(t, err)
-				return initiator.Reload, func() *session { return initiator.sessions[clientSessionID("A")] }
+				return startReloadable(t, initiator, source), func() *session { return initiator.sessions[clientSessionID("A")] }
 			},
 		},
 	} {
@@ -615,26 +626,21 @@ func TestInitiatorReloadFailsToRegister(t *testing.T) {
 			require.NoError(t, registry.register(other))
 		}
 	}}
-	initiator, err := NewInitiator(newReloadApp(), storeFactory,
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)))
+	initiator, err := NewInitiator(newReloadApp(), storeFactory, source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
-	runForTest(t, initiator)
+	_, err = startForTest(t, initiator)
+	require.NoError(t, err)
 	sessionA := func() *session {
 		initiator.reloadMu.Lock()
 		defer initiator.reloadMu.Unlock()
 		return initiator.sessions[clientSessionID("A")]
 	}
-	require.Eventually(t, func() bool {
-		initiator.reloadMu.Lock()
-		defer initiator.reloadMu.Unlock()
-		return initiator.runState == runStarted
-	}, 5*time.Second, 10*time.Millisecond)
 	before := sessionA()
 
 	next := reloadSettings(t, reloadInitiatorGlobal,
 		initiatorSession("A", port, config.LogonTimeout, "20"), initiatorSession("B", port))
-	err = initiator.Reload(context.Background(), next)
+	err = reloadWith(initiator, source, next)
 	require.ErrorIs(t, err, errDuplicateSessionID)
 	assert.True(t, before == sessionA(), "A should not have been restarted")
 	registered, _ := registry.lookup(clientSessionID("A"))
@@ -645,7 +651,7 @@ func TestInitiatorReloadFailsToRegister(t *testing.T) {
 
 	conflict = false
 	require.NoError(t, registry.UnregisterSession(clientSessionID("B")))
-	require.NoError(t, initiator.Reload(context.Background(), next))
+	require.NoError(t, reloadWith(initiator, source, next))
 	registered, _ = registry.lookup(clientSessionID("B"))
 	require.NotNil(t, registered, "Reload should have retried B")
 	assert.True(t, other != registered, "B should be registered to the initiator")
@@ -669,7 +675,7 @@ func TestAcceptorReloadRacesDynamicSession(t *testing.T) {
 		// B logs on as a dynamic session after Reload has checked that B is
 		// not registered.
 		initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(),
-			reloadSettings(t, reloadInitiatorGlobal, initiatorSession("B", port)),
+			StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("B", port))),
 			NewNullLogFactory(), WithRegistry(NewRegistry()))
 		require.NoError(t, err)
 		dynamicB = runForTest(t, initiator)
@@ -678,9 +684,8 @@ func TestAcceptorReloadRacesDynamicSession(t *testing.T) {
 			return ok
 		}, 5*time.Second, 10*time.Millisecond)
 	}
-	acceptor, err := NewAcceptor(newReloadApp(), storeFactory,
-		reloadSettings(t, global, acceptorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(reloadSettings(t, global, acceptorSession("A", port)))
+	acceptor, err := NewAcceptor(newReloadApp(), storeFactory, source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
@@ -693,7 +698,7 @@ func TestAcceptorReloadRacesDynamicSession(t *testing.T) {
 
 	next := reloadSettings(t, global,
 		acceptorSession("A", port, config.LogonTimeout, "20"), acceptorSession("B", port))
-	err = acceptor.Reload(context.Background(), next)
+	err = reloadWith(acceptor, source, next)
 	require.ErrorIs(t, err, errDuplicateSessionID)
 	assert.True(t, before == sessionA(), "A should not have been restarted")
 	registered, _ := registry.lookup(serverSessionID("A"))
@@ -705,43 +710,13 @@ func TestAcceptorReloadRacesDynamicSession(t *testing.T) {
 		_, ok := registry.lookup(serverSessionID("B"))
 		return !ok
 	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, acceptor.Reload(context.Background(), next))
+	require.NoError(t, reloadWith(acceptor, source, next))
 	acceptor.mu.RLock()
 	staticB := acceptor.sessions[serverSessionID("B")]
 	acceptor.mu.RUnlock()
 	require.NotNil(t, staticB, "Reload should have retried B")
 	registered, _ = registry.lookup(serverSessionID("B"))
 	assert.True(t, staticB == registered, "B should be registered to the static session")
-}
-
-// TestInitiatorRunAfterReloadFailsToRegister checks that Run starts only the
-// sessions an earlier Reload managed to register.
-func TestInitiatorRunAfterReloadFailsToRegister(t *testing.T) {
-	const port = 5132
-	registry := NewRegistry()
-	// Another engine sharing the registry registers B while Reload is
-	// building it, after Reload has checked that B is not registered.
-	storeFactory := &hookStoreFactory{onCreate: func(sessionID SessionID) {
-		if sessionID == clientSessionID("B") {
-			require.NoError(t, registry.register(&session{sessionID: sessionID}))
-		}
-	}}
-	initiator, err := NewInitiator(newReloadApp(), storeFactory,
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(registry))
-	require.NoError(t, err)
-
-	err = initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port)))
-	require.ErrorIs(t, err, errDuplicateSessionID)
-
-	run := runForTest(t, initiator)
-	require.Eventually(t, func() bool {
-		initiator.reloadMu.Lock()
-		defer initiator.reloadMu.Unlock()
-		return initiator.runState == runStarted
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, run.stop())
 }
 
 // TestAcceptorReloadKeepsDynamicSessionPorts checks that, with
@@ -751,19 +726,17 @@ func TestAcceptorReloadKeepsDynamicSessionPorts(t *testing.T) {
 	const port = 5136
 	global := map[string]string{config.HeartBtInt: "30", config.DynamicSessions: "Y"}
 	acceptorApp := newReloadApp()
-	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, global, acceptorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(NewRegistry()))
+	source := newTestSource(reloadSettings(t, global, acceptorSession("A", port)))
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
 	// A moves to another port, so no static session uses port any more.
-	require.NoError(t, acceptor.Reload(context.Background(),
-		reloadSettings(t, global, acceptorSession("A", port+1))))
+	require.NoError(t, reloadWith(acceptor, source, reloadSettings(t, global, acceptorSession("A", port+1))))
 
 	initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("X", port)),
+		StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("X", port))),
 		NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	runForTest(t, initiator)
@@ -775,19 +748,13 @@ func TestReloadAfterRunFails(t *testing.T) {
 	stop, err := startForTest(t, acceptor)
 	require.NoError(t, err)
 	stop()
-	err = acceptor.Reload(context.Background(), acceptor.settings)
-	require.ErrorIs(t, err, errReloadAfterRun)
+	require.ErrorIs(t, acceptor.Reload(context.Background()), errReloadAfterRun)
 
 	initiator := newLifecycleInitiator(t, newReloadApp(), 5128)
-	run := runForTest(t, initiator)
-	require.Eventually(t, func() bool {
-		initiator.reloadMu.Lock()
-		defer initiator.reloadMu.Unlock()
-		return initiator.runState == runStarted
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, run.stop())
-	err = initiator.Reload(context.Background(), initiator.settings)
-	require.ErrorIs(t, err, errReloadAfterRun)
+	stop, err = startForTest(t, initiator)
+	require.NoError(t, err)
+	stop()
+	require.ErrorIs(t, initiator.Reload(context.Background()), errReloadAfterRun)
 }
 
 // TestInitiatorReload adds, changes and removes initiator sessions while they
@@ -799,31 +766,28 @@ func TestInitiatorReload(t *testing.T) {
 	registry := NewRegistry()
 
 	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port), acceptorSession("B", port)),
+		StaticSettings(reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port), acceptorSession("B", port))),
 		NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
-	initiator, err := NewInitiator(initiatorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(registry))
+	source := newTestSource(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)))
+	initiator, err := NewInitiator(initiatorApp, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(registry))
 	require.NoError(t, err)
 	runForTest(t, initiator)
 	initiatorApp.waitLogons(t, "SERVER", 1)
 	acceptorApp.waitLogons(t, "A", 1)
 
 	// Adding B connects it.
-	require.NoError(t, initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port))))
+	require.NoError(t, reloadWith(initiator, source, reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port))))
 	acceptorApp.waitLogons(t, "B", 1)
 
 	// Changing A restarts it, keeping its sequence numbers.
 	seqNum, err := registry.GetExpectedSenderNum(clientSessionID("A"))
 	require.NoError(t, err)
 	require.Greater(t, seqNum, 1)
-	require.NoError(t, initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.LogonTimeout, "20"), initiatorSession("B", port))))
+	require.NoError(t, reloadWith(initiator, source, reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.LogonTimeout, "20"), initiatorSession("B", port))))
 	acceptorApp.waitLogouts(t, "A", 1)
 	acceptorApp.waitLogons(t, "A", 2)
 	restartedSeqNum, err := registry.GetExpectedSenderNum(clientSessionID("A"))
@@ -831,18 +795,15 @@ func TestInitiatorReload(t *testing.T) {
 	assert.Greater(t, restartedSeqNum, seqNum, "A's sequence numbers should carry over")
 
 	// Removing B logs it out and unregisters it.
-	require.NoError(t, initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.LogonTimeout, "20"))))
+	require.NoError(t, reloadWith(initiator, source, reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.LogonTimeout, "20"))))
 	acceptorApp.waitLogouts(t, "B", 1)
 	_, err = registry.GetExpectedSenderNum(clientSessionID("B"))
 	require.ErrorIs(t, err, errUnknownSession)
 
 	// A bad setting changes nothing.
-	err = initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.HeartBtInt, "often")))
+	err = reloadWith(initiator, source, reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port, config.HeartBtInt, "often")))
 	require.Error(t, err)
-	err = initiator.Reload(context.Background(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("C", port, config.SocketUseSSL, "maybe")))
+	err = reloadWith(initiator, source, reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("C", port, config.SocketUseSSL, "maybe")))
 	require.Error(t, err)
 	_, err = registry.GetExpectedSenderNum(clientSessionID("C"))
 	require.ErrorIs(t, err, errUnknownSession)
@@ -861,28 +822,31 @@ func TestInitiatorReload(t *testing.T) {
 func TestReloadIsSerialised(t *testing.T) {
 	const port = 5130
 	acceptorApp := newReloadApp()
-	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
-		reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port)),
-		NewNullLogFactory(), WithRegistry(NewRegistry()))
+	// Each load returns different settings, with B in every other one.
+	var loads atomic.Int64
+	source := func(context.Context) (*Settings, error) {
+		sessions := []map[string]string{acceptorSession("A", port)}
+		if loads.Add(1)%2 == 0 {
+			sessions = append(sessions, acceptorSession("B", port))
+		}
+		return reloadSettings(t, reloadAcceptorGlobal, sessions...), nil
+	}
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
 
 	initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(),
-		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port)),
+		StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port))),
 		NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	runForTest(t, initiator)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 10)
-	for n := range 10 {
+	for range 10 {
 		wg.Go(func() {
-			sessions := []map[string]string{acceptorSession("A", port)}
-			if n%2 == 0 {
-				sessions = append(sessions, acceptorSession("B", port))
-			}
-			errs <- acceptor.Reload(context.Background(), reloadSettings(t, reloadAcceptorGlobal, sessions...))
+			errs <- acceptor.Reload(context.Background())
 		})
 	}
 	wg.Wait()

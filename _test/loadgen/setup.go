@@ -72,7 +72,7 @@ func newAcceptor(opts options, port int, app gofix.Application, counter *byteCou
 		return nil, err
 	}
 
-	acceptor, err := gofix.NewAcceptor(app, storeFactory, settings, countingLogFactory{counter})
+	acceptor, err := gofix.NewAcceptor(app, storeFactory, gofix.StaticSettings(settings), countingLogFactory{counter})
 	if err != nil {
 		return nil, fmt.Errorf("creating acceptor: %w", err)
 	}
@@ -97,7 +97,7 @@ func newInitiator(opts options, port int, app gofix.Application, counter *byteCo
 		return nil, err
 	}
 
-	initiator, err := gofix.NewInitiator(app, storeFactory, settings, countingLogFactory{counter})
+	initiator, err := gofix.NewInitiator(app, storeFactory, gofix.StaticSettings(settings), countingLogFactory{counter})
 	if err != nil {
 		return nil, fmt.Errorf("creating initiator: %w", err)
 	}

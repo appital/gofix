@@ -6,7 +6,7 @@
 //
 //	factory, err := prometheus.NewMetricsFactory(prom.DefaultRegisterer)
 //	...
-//	acceptor, err := gofix.NewAcceptor(app, storeFactory, settings, logFactory, gofix.WithMetrics(factory))
+//	acceptor, err := gofix.NewAcceptor(app, storeFactory, gofix.StaticSettings(settings), logFactory, gofix.WithMetrics(factory))
 package prometheus
 
 import (
