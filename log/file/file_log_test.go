@@ -159,11 +159,11 @@ func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
 }
 
 func TestFileLog_Close(t *testing.T) {
-	settings := gofix.NewSettings()
-	settings.GlobalSettings().Set(config.FileLogPath, t.TempDir())
+	settings := gofix.NewSessionSettings()
+	settings.Set(config.FileLogPath, t.TempDir())
 	factory := NewLogFactory()
 	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	log, err := factory.CreateSessionLog(sessionID, settings.GlobalSettings())
+	log, err := factory.CreateSessionLog(sessionID, settings)
 	if err != nil {
 		t.Fatal(err)
 	}

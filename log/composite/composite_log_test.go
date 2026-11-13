@@ -199,6 +199,45 @@ func (f closingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSetti
 	return f.log, nil
 }
 
+// failingLogFactory fails to create any log.
+type failingLogFactory struct {
+	err error
+}
+
+func (f failingLogFactory) Create(*gofix.SessionSettings) (gofix.Log, error) { return nil, f.err }
+
+func (f failingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
+	return nil, f.err
+}
+
+// TestCreateClosesLogsOnFailure checks that when one factory fails, the logs
+// the earlier factories created are closed rather than leaked.
+func TestCreateClosesLogsOnFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		create func(gofix.LogFactory) (gofix.Log, error)
+	}{
+		{name: "Create", create: func(f gofix.LogFactory) (gofix.Log, error) {
+			return f.Create(gofix.NewSessionSettings())
+		}},
+		{name: "CreateSessionLog", create: func(f gofix.LogFactory) (gofix.Log, error) {
+			return f.CreateSessionLog(gofix.SessionID{}, gofix.NewSessionSettings())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := errors.New("cannot create")
+			opened := &closingLog{}
+			l, err := tc.create(NewLogFactory([]gofix.LogFactory{
+				closingLogFactory{opened},
+				failingLogFactory{failure},
+			}))
+			require.ErrorIs(t, err, failure)
+			require.Nil(t, l)
+			require.True(t, opened.closed, "logs created before the failure should be closed")
+		})
+	}
+}
+
 func TestCreatePassesGlobalSettings(t *testing.T) {
 	settings := gofix.NewSessionSettings()
 	var first, second *gofix.SessionSettings

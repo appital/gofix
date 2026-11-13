@@ -71,6 +71,7 @@ func (clf compositeLogFactory) Create(settings *gofix.SessionSettings) (gofix.Lo
 	for _, lf := range clf.logFactories {
 		log, err := lf.Create(settings)
 		if err != nil {
+			_ = compositeLog{logs}.Close()
 			return nil, err
 		}
 		logs = append(logs, log)

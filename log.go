@@ -38,7 +38,8 @@ type Log interface {
 // The LogFactory interface creates global and session specific Log instances.
 type LogFactory interface {
 	// Create creates the global log, which records events that do not
-	// belong to a session. settings is the global settings. A factory
+	// belong to a session. settings is the global settings, and is never
+	// nil when the engine calls Create. A factory
 	// should read anything it needs for the global log, such as where to
 	// write it, from settings.
 	Create(settings *SessionSettings) (Log, error)
