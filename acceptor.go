@@ -72,6 +72,9 @@ type Acceptor struct {
 	// mu guards settings, sessions and sessionHostPort, which Reload changes
 	// while connections are being handled.
 	mu sync.RWMutex
+	// sessionSettings holds the effective settings of the static sessions.
+	// It is guarded by reloadMu.
+	sessionSettings map[SessionID]*SessionSettings
 	sessionFactory
 }
 
@@ -157,7 +160,7 @@ func (a *Acceptor) start(ctx context.Context) (err error) {
 
 	a.sessionHostPort = make(map[SessionID]int)
 	a.listeners = make(map[string]net.Listener)
-	for sessionID, sessionSettings := range a.settings.SessionSettings() {
+	for sessionID, sessionSettings := range a.sessionSettings {
 		if sessionSettings.HasSetting(config.SocketAcceptPort) {
 			if a.sessionHostPort[sessionID], err = sessionSettings.IntSetting(config.SocketAcceptPort); err != nil {
 				return
@@ -281,17 +284,23 @@ func (a *Acceptor) Registry() *Registry {
 //   - A session only in settings is created, registered and started. A
 //     listener is opened for its port if no other session uses it.
 //   - A session not in settings is logged out, disconnected and unregistered.
-//     Its listener is closed if no session uses it any more. Its store is
-//     closed but not reset.
+//     Its listener is closed if no session uses it any more, unless
+//     DynamicSessions is set. Its store is closed but not reset, and its log
+//     is closed.
 //   - A session whose settings differ is stopped as if it had been removed,
 //     then started with the new settings. It keeps its store, so its sequence
-//     numbers carry over.
+//     numbers carry over, and Reload returns an error and changes nothing if
+//     settings changes its FileStore or SQLStore settings. To give a session
+//     a new store, remove it with one Reload and add it with the next.
 //   - A session whose settings are the same is left alone and stays
 //     connected.
 //
-// Every new and changed session is built, and every new listener opened,
-// before anything is stopped. If any of that fails, Reload returns the error
-// and the acceptor is left as it was. Reload also returns an error and changes
+// Every new and changed session is built, every new listener opened and every
+// new session registered before anything is stopped. If any of that fails,
+// Reload returns the error and the acceptor is left as it was. If a restarted
+// session cannot be registered again once the session it replaces has
+// stopped, Reload leaves it stopped, returns the error, and starts it on the
+// next Reload. Reload also returns an error and changes
 // nothing if settings changes a global setting that the acceptor reads once
 // rather than for each session, such as SocketAcceptHost, UseTCPProxy,
 // MaxMessageSize, SocketReadTimeout, DynamicSessions or the TLS settings. To
@@ -306,7 +315,9 @@ func (a *Acceptor) Registry() *Registry {
 // failed Reload does not stop Run.
 //
 // Sessions created by DynamicSessions are not in settings, and are left
-// alone. Sessions created after Reload take its global settings.
+// alone. Sessions created after Reload take its global settings. They can log
+// on through any of the acceptor's ports, so with DynamicSessions Reload never
+// closes a listener.
 //
 // The acceptor keeps settings, which must not be changed afterwards.
 func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
@@ -316,26 +327,23 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 	if a.runState == runFinished {
 		return errReloadAfterRun
 	}
-	if err := checkEngineSettings(a.settings.GlobalSettings(), settings.GlobalSettings(), acceptorEngineSettings); err != nil {
+	if err := checkUnchanged(a.settings.GlobalSettings(), settings.GlobalSettings(), acceptorEngineSettings); err != nil {
 		return err
 	}
 
 	nextSettings := settings.SessionSettings()
-	changes := diffSessions(a.settings.SessionSettings(), nextSettings)
-
-	// The acceptor keys its sessions without their qualifier.
-	nextIDs := make(map[SessionID]bool, len(nextSettings))
-	for sessionID := range nextSettings {
-		sessionID.Qualifier = ""
-		if nextIDs[sessionID] {
-			return fmt.Errorf("%v: %w", sessionID, errDuplicateSessionID)
-		}
-		nextIDs[sessionID] = true
+	changes := diffSessions(a.sessionSettings, nextSettings)
+	if err := checkStoreSettings(a.sessionSettings, changes); err != nil {
+		return err
 	}
-	for sessionID := range changes.added {
-		if _, ok := a.reg().lookup(sessionID); ok {
-			return fmt.Errorf("%v: %w", sessionID, errDuplicateSessionID)
+
+	nextKeys := make(map[SessionID]bool, len(nextSettings))
+	for sessionID := range nextSettings {
+		key := acceptorKey(sessionID)
+		if nextKeys[key] {
+			return fmt.Errorf("%v: %w", key, errDuplicateSessionID)
 		}
+		nextKeys[key] = true
 	}
 
 	hostPort := make(map[SessionID]int, len(nextSettings))
@@ -347,7 +355,8 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 		hostPort[sessionID] = port
 	}
 
-	built, fresh, err := a.buildSessions(changes)
+	current := func(sessionID SessionID) *session { return a.sessions[acceptorKey(sessionID)] }
+	built, err := a.buildSessions(changes, current, a.storeFactory, a.logFactory, a.app)
 	if err != nil {
 		return err
 	}
@@ -369,26 +378,29 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 				for _, l := range opened {
 					l.Close()
 				}
-				closeStores(fresh)
+				discardSessions(changes, built)
 				return err
 			}
 			opened[address] = listener
 		}
 	}
 
-	// Nothing can fail from here on that leaves the acceptor as it was. A
-	// session can be missing if an earlier Reload failed to register it.
-	var removed, old []*session
-	for _, sessionID := range changes.removed {
-		if s := a.sessions[acceptorKey(sessionID)]; s != nil {
-			removed = append(removed, s)
+	if err := registerAdded(a.reg(), changes, built); err != nil {
+		for _, l := range opened {
+			l.Close()
 		}
+		discardSessions(changes, built)
+		return err
 	}
-	old = slices.Clone(removed)
+
+	// Nothing can fail from here on that leaves the acceptor as it was.
+	removed := make([]*session, 0, len(changes.removed))
+	for _, sessionID := range changes.removed {
+		removed = append(removed, a.sessions[acceptorKey(sessionID)])
+	}
+	old := slices.Clone(removed)
 	for sessionID := range changes.changed {
-		if s := a.sessions[acceptorKey(sessionID)]; s != nil {
-			old = append(old, s)
-		}
+		old = append(old, a.sessions[acceptorKey(sessionID)])
 	}
 
 	var errs []error
@@ -406,13 +418,13 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 		}
 	}
 
-	started := make(map[SessionID]*session, len(built))
-	for sessionID, s := range built {
-		if err := a.registerSession(s); err != nil {
-			errs = append(errs, fmt.Errorf("registering session %v: %w", sessionID, err))
-			continue
-		}
-		started[sessionID] = s
+	failed, registerErrs := registerChanged(a.reg(), changes, built, nextSettings)
+	errs = append(errs, registerErrs...)
+	for _, sessionID := range failed {
+		delete(hostPort, sessionID)
+	}
+	for _, s := range built {
+		announceSession(s)
 	}
 
 	a.mu.Lock()
@@ -423,15 +435,16 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 	for sessionID := range changes.changed {
 		delete(a.sessions, acceptorKey(sessionID))
 	}
-	for sessionID, s := range started {
+	for sessionID, s := range built {
 		a.sessions[acceptorKey(sessionID)] = s
 	}
 	a.sessionHostPort = hostPort
 	a.settings = settings
+	a.sessionSettings = nextSettings
 	a.mu.Unlock()
 
 	if a.runState == runStarted {
-		for _, s := range started {
+		for _, s := range built {
 			a.sessionGroup.Go(s.run)
 		}
 		for address, listener := range opened {
@@ -440,14 +453,18 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 				a.listenForConnections(listener)
 			})
 		}
-		inUse := make(map[string]bool, len(hostPort))
-		for _, port := range hostPort {
-			inUse[a.listenAddress(port)] = true
-		}
-		for address, listener := range a.listeners {
-			if !inUse[address] {
-				listener.Close()
-				delete(a.listeners, address)
+		// Dynamic sessions can log on through any of the acceptor's ports,
+		// so none is closed while they are enabled.
+		if !a.dynamicSessions {
+			inUse := make(map[string]bool, len(hostPort))
+			for _, port := range hostPort {
+				inUse[a.listenAddress(port)] = true
+			}
+			for address, listener := range a.listeners {
+				if !inUse[address] {
+					listener.Close()
+					delete(a.listeners, address)
+				}
 			}
 		}
 	}
@@ -455,6 +472,13 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 	for _, s := range removed {
 		if err := s.store.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing store of session %v: %w", s.sessionID, err))
+		}
+	}
+	// A restarted session has a log of its own, but takes over the store of
+	// the session it replaces.
+	for _, s := range old {
+		if err := closeLog(s.log); err != nil {
+			errs = append(errs, fmt.Errorf("closing log of session %v: %w", s.sessionID, err))
 		}
 	}
 
@@ -467,41 +491,6 @@ func (a *Acceptor) Reload(ctx context.Context, settings *Settings) error {
 func acceptorKey(sessionID SessionID) SessionID {
 	sessionID.Qualifier = ""
 	return sessionID
-}
-
-// buildSessions builds, without registering or starting them, the sessions
-// Reload adds and restarts. Restarted sessions take the store of the session
-// they replace. fresh holds the sessions given new stores. If building any
-// session fails, buildSessions closes the stores it created and returns the
-// error.
-func (a *Acceptor) buildSessions(changes sessionChanges) (built map[SessionID]*session, fresh []*session, err error) {
-	built = make(map[SessionID]*session, len(changes.added)+len(changes.changed))
-	for sessionID, sessionSettings := range changes.added {
-		s, err := a.newSession(sessionID, a.storeFactory, sessionSettings, a.logFactory, a.app)
-		if err != nil {
-			closeStores(fresh)
-			return nil, nil, fmt.Errorf("session %v: %w", sessionID, err)
-		}
-		fresh = append(fresh, s)
-		built[sessionID] = s
-	}
-	for sessionID, sessionSettings := range changes.changed {
-		storeFactory := a.storeFactory
-		current := a.sessions[acceptorKey(sessionID)]
-		if current != nil {
-			storeFactory = existingStoreFactory{current.store}
-		}
-		s, err := a.newSession(sessionID, storeFactory, sessionSettings, a.logFactory, a.app)
-		if err != nil {
-			closeStores(fresh)
-			return nil, nil, fmt.Errorf("session %v: %w", sessionID, err)
-		}
-		if current == nil {
-			fresh = append(fresh, s)
-		}
-		built[sessionID] = s
-	}
-	return built, fresh, nil
 }
 
 // NewAcceptor creates and initializes a new Acceptor. It returns an error if
@@ -517,6 +506,7 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		app:             app,
 		storeFactory:    storeFactory,
 		settings:        settings,
+		sessionSettings: settings.SessionSettings(),
 		logFactory:      logFactory,
 		sessions:        make(map[SessionID]*session),
 		sessionHostPort: make(map[SessionID]int),
@@ -709,10 +699,15 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 	}
 
 	localConnectionPort := netConn.LocalAddr().(*net.TCPAddr).Port
+	// The port, session and settings are read together so that they come
+	// from the same Reload.
 	a.mu.RLock()
-	expectedPort, ok := a.sessionHostPort[sessID]
+	expectedPort, hasPort := a.sessionHostPort[sessID]
+	session, ok := a.sessions[sessID]
+	// Reload replaces settings rather than changing it.
+	globalSettings := a.settings.globalSettings
 	a.mu.RUnlock()
-	if ok && expectedPort != localConnectionPort {
+	if hasPort && expectedPort != localConnectionPort {
 		a.globalLog.OnEventf("Session %v not found for incoming message: %s", sessID, msgBytes)
 		return
 	}
@@ -727,12 +722,10 @@ func (a *Acceptor) handleConnection(netConn net.Conn) {
 
 	if a.dynamicQualifier {
 		sessID.Qualifier = strconv.FormatInt(a.dynamicQualifierCount.Add(1), 10)
+		// The acceptor keys its sessions without their qualifier, so a
+		// qualified session is always a new dynamic one.
+		session, ok = nil, false
 	}
-	a.mu.RLock()
-	session, ok := a.sessions[sessID]
-	// Reload replaces settings rather than changing it.
-	globalSettings := a.settings.globalSettings
-	a.mu.RUnlock()
 	if !ok {
 		if !a.dynamicSessions {
 			a.globalLog.OnEventf("Session %v not found for incoming message: %s", sessID, msgBytes)

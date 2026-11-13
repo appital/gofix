@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"iter"
 	"maps"
 	"slices"
 
@@ -51,10 +53,10 @@ var acceptorEngineSettings = []string{
 	config.SocketMinimumTLSVersion,
 }
 
-// checkEngineSettings returns an error naming the first of names whose value
+// checkUnchanged returns an error naming the first of names whose value
 // in next differs from its value in current, or that is set in only one of
 // them.
-func checkEngineSettings(current, next *SessionSettings, names []string) error {
+func checkUnchanged(current, next *SessionSettings, names []string) error {
 	for _, name := range names {
 		cur, inCur := current.settings[name]
 		nxt, inNext := next.settings[name]
@@ -63,6 +65,19 @@ func checkEngineSettings(current, next *SessionSettings, names []string) error {
 		}
 	}
 	return nil
+}
+
+// storeSettings are the settings the built-in MessageStoreFactory
+// implementations read. A restarted session keeps the store of the session it
+// replaces, so Reload refuses to change them for it.
+var storeSettings = []string{
+	config.FileStorePath,
+	config.FileStoreSync,
+	config.SQLStoreDriver,
+	config.SQLStoreDataSourceName,
+	config.SQLStoreConnMaxLifetime,
+	config.SQLStoreMessagesTableName,
+	config.SQLStoreSessionsTableName,
 }
 
 // sessionChanges is what Reload must do to bring an engine's sessions in line
@@ -101,6 +116,35 @@ func diffSessions(current, next map[SessionID]*SessionSettings) sessionChanges {
 	return changes
 }
 
+// starting yields the sessions Reload builds and starts: those it adds, then
+// those it restarts.
+func (c sessionChanges) starting() iter.Seq2[SessionID, *SessionSettings] {
+	return func(yield func(SessionID, *SessionSettings) bool) {
+		for sessionID, settings := range c.added {
+			if !yield(sessionID, settings) {
+				return
+			}
+		}
+		for sessionID, settings := range c.changed {
+			if !yield(sessionID, settings) {
+				return
+			}
+		}
+	}
+}
+
+// checkStoreSettings returns an error if changes restarts a session with
+// store settings that differ from those in current, the settings of the
+// running sessions.
+func checkStoreSettings(current map[SessionID]*SessionSettings, changes sessionChanges) error {
+	for sessionID, settings := range changes.changed {
+		if err := checkUnchanged(current[sessionID], settings, storeSettings); err != nil {
+			return fmt.Errorf("session %v: %w; remove the session and add it again to give it a new store", sessionID, err)
+		}
+	}
+	return nil
+}
+
 // existingStoreFactory hands a session that is being restarted the store of
 // the session it replaces, so that its sequence numbers carry over.
 type existingStoreFactory struct {
@@ -136,9 +180,95 @@ func waitStopped(ctx context.Context, stopping []stoppingSession) error {
 	return err
 }
 
-// closeStores closes the stores of sessions that were built but never used.
-func closeStores(sessions []*session) {
-	for _, s := range sessions {
-		_ = s.store.Close()
+// closeLog closes log if it implements io.Closer.
+func closeLog(log Log) error {
+	if closer, ok := log.(io.Closer); ok {
+		return closer.Close()
 	}
+	return nil
+}
+
+// buildSessions builds, without registering or starting them, the sessions
+// Reload adds and restarts. A restarted session takes over the store of the
+// running session it replaces, which current returns. If building any session
+// fails, buildSessions discards those it built and returns the error.
+func (f sessionFactory) buildSessions(
+	changes sessionChanges, current func(SessionID) *session,
+	storeFactory MessageStoreFactory, logFactory LogFactory, app Application,
+) (map[SessionID]*session, error) {
+	built := make(map[SessionID]*session, len(changes.added)+len(changes.changed))
+	for sessionID, settings := range changes.starting() {
+		sessionStoreFactory := storeFactory
+		if _, restarted := changes.changed[sessionID]; restarted {
+			sessionStoreFactory = existingStoreFactory{current(sessionID).store}
+		}
+		s, err := f.newSession(sessionID, sessionStoreFactory, settings, logFactory, app)
+		if err != nil {
+			discardSessions(changes, built)
+			return nil, fmt.Errorf("session %v: %w", sessionID, err)
+		}
+		built[sessionID] = s
+	}
+	return built, nil
+}
+
+// discardSessions closes the logs of the sessions in built, which Reload
+// built but will not start, and the stores of those it was adding. A
+// restarted session's store still belongs to the session it would have
+// replaced.
+func discardSessions(changes sessionChanges, built map[SessionID]*session) {
+	for sessionID, s := range built {
+		if _, added := changes.added[sessionID]; added {
+			_ = s.store.Close()
+		}
+		_ = closeLog(s.log)
+	}
+}
+
+// registerAdded registers the sessions Reload adds, from built, before Reload
+// stops anything. Once they are registered, neither a dynamic session nor
+// another engine sharing the registry can take their SessionIDs and make
+// Reload fail after it can no longer leave the engine as it was. Their
+// applications are told they have been created once Reload has applied the
+// change. If one cannot be registered, registerAdded unregisters the others
+// and returns the error.
+func registerAdded(reg *Registry, changes sessionChanges, built map[SessionID]*session) error {
+	added := make([]*session, 0, len(changes.added))
+	for sessionID := range changes.added {
+		added = append(added, built[sessionID])
+	}
+	for n, s := range added {
+		if err := reg.register(s); err != nil {
+			for _, registered := range added[:n] {
+				_ = reg.UnregisterSession(registered.sessionID)
+			}
+			return fmt.Errorf("session %v: %w", s.sessionID, err)
+		}
+	}
+	return nil
+}
+
+// registerChanged registers the sessions Reload restarts, from built, once
+// the sessions they replace have been unregistered. A session that cannot be
+// registered has its store and log closed, since the session it replaces has
+// stopped, and is dropped from built and from next, the settings the engine
+// keeps, so that the next Reload adds it again. It returns the SessionIDs of
+// those sessions and why each failed.
+func registerChanged(reg *Registry, changes sessionChanges, built map[SessionID]*session, next map[SessionID]*SessionSettings) (failed []SessionID, errs []error) {
+	for sessionID := range changes.changed {
+		s := built[sessionID]
+		if err := reg.register(s); err != nil {
+			errs = append(errs, fmt.Errorf("registering session %v: %w", sessionID, err))
+			if err := s.store.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("closing store of session %v: %w", sessionID, err))
+			}
+			if err := closeLog(s.log); err != nil {
+				errs = append(errs, fmt.Errorf("closing log of session %v: %w", sessionID, err))
+			}
+			delete(built, sessionID)
+			delete(next, sessionID)
+			failed = append(failed, sessionID)
+		}
+	}
+	return failed, errs
 }

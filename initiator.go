@@ -80,10 +80,11 @@ func (i *Initiator) Run(ctx context.Context) error {
 
 	i.reloadMu.Lock()
 	// Every session's settings are loaded before any session starts, so that
-	// a bad setting leaves nothing running.
-	configs := make(map[SessionID]initiatorConfig, len(i.sessionSettings))
-	for sessionID, settings := range i.sessionSettings {
-		cfg, err := loadInitiatorConfig(settings)
+	// a bad setting leaves nothing running. Only the sessions the initiator
+	// has registered are started.
+	configs := make(map[SessionID]initiatorConfig, len(i.sessions))
+	for sessionID := range i.sessions {
+		cfg, err := loadInitiatorConfig(i.sessionSettings[sessionID])
 		if err != nil {
 			i.reloadMu.Unlock()
 			i.lifecycle.abort()
@@ -151,16 +152,20 @@ func (i *Initiator) startSession(sessionID SessionID, cfg initiatorConfig) {
 //   - A session only in settings is created, registered and started, and
 //     connects.
 //   - A session not in settings is logged out, disconnected and unregistered.
-//     Its store is closed but not reset.
+//     Its store is closed but not reset, and its log is closed.
 //   - A session whose settings differ is stopped as if it had been removed,
 //     then started with the new settings. It keeps its store, so its sequence
-//     numbers carry over.
+//     numbers carry over, and Reload returns an error and changes nothing if
+//     settings changes its FileStore or SQLStore settings. To give a session
+//     a new store, remove it with one Reload and add it with the next.
 //   - A session whose settings are the same is left alone and stays
 //     connected.
 //
-// Every new and changed session is built before anything is stopped. If
-// building one fails, Reload returns the error and the initiator is left as it
-// was.
+// Every new and changed session is built, and every new session registered,
+// before anything is stopped. If any of that fails, Reload returns the error
+// and the initiator is left as it was. If a restarted session cannot be
+// registered again once the session it replaces has stopped, Reload leaves it
+// stopped, returns the error, and starts it on the next Reload.
 //
 // ctx limits how long Reload waits for sessions to log out. Once it is done,
 // the sessions still logging out are disconnected without waiting further,
@@ -181,30 +186,35 @@ func (i *Initiator) Reload(ctx context.Context, settings *Settings) error {
 
 	nextSettings := settings.SessionSettings()
 	changes := diffSessions(i.sessionSettings, nextSettings)
-	for sessionID := range changes.added {
-		if _, ok := i.reg().lookup(sessionID); ok {
-			return fmt.Errorf("%v: %w", sessionID, errDuplicateSessionID)
-		}
-	}
-
-	built, configs, err := i.buildSessions(changes)
-	if err != nil {
+	if err := checkStoreSettings(i.sessionSettings, changes); err != nil {
 		return err
 	}
 
-	// Nothing can fail from here on that leaves the initiator as it was. A
-	// session can be missing if an earlier Reload failed to register it.
-	var removed, old []SessionID
-	for _, sessionID := range changes.removed {
-		if _, ok := i.sessions[sessionID]; ok {
-			removed = append(removed, sessionID)
+	// What is needed to connect each session holds nothing that must be
+	// released, so it is loaded before the sessions are built.
+	configs := make(map[SessionID]initiatorConfig, len(changes.added)+len(changes.changed))
+	for sessionID, sessionSettings := range changes.starting() {
+		cfg, err := loadInitiatorConfig(sessionSettings)
+		if err != nil {
+			return fmt.Errorf("session %v: %w", sessionID, err)
 		}
+		configs[sessionID] = cfg
 	}
-	old = slices.Clone(removed)
+
+	current := func(sessionID SessionID) *session { return i.sessions[sessionID] }
+	built, err := i.buildSessions(changes, current, i.storeFactory, i.logFactory, i.app)
+	if err != nil {
+		return err
+	}
+	if err := registerAdded(i.reg(), changes, built); err != nil {
+		discardSessions(changes, built)
+		return err
+	}
+
+	// Nothing can fail from here on that leaves the initiator as it was.
+	old := slices.Clone(changes.removed)
 	for sessionID := range changes.changed {
-		if _, ok := i.sessions[sessionID]; ok {
-			old = append(old, sessionID)
-		}
+		old = append(old, sessionID)
 	}
 
 	var errs []error
@@ -222,9 +232,16 @@ func (i *Initiator) Reload(ctx context.Context, settings *Settings) error {
 			errs = append(errs, fmt.Errorf("unregistering session %v: %w", sessionID, err))
 		}
 	}
-	for _, sessionID := range removed {
+	for _, sessionID := range changes.removed {
 		if err := i.sessions[sessionID].store.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing store of session %v: %w", sessionID, err))
+		}
+	}
+	// A restarted session has a log of its own, but takes over the store of
+	// the session it replaces.
+	for _, sessionID := range old {
+		if err := closeLog(i.sessions[sessionID].log); err != nil {
+			errs = append(errs, fmt.Errorf("closing log of session %v: %w", sessionID, err))
 		}
 	}
 	for _, sessionID := range old {
@@ -232,11 +249,10 @@ func (i *Initiator) Reload(ctx context.Context, settings *Settings) error {
 		delete(i.sessionRuns, sessionID)
 	}
 
+	_, registerErrs := registerChanged(i.reg(), changes, built, nextSettings)
+	errs = append(errs, registerErrs...)
 	for sessionID, s := range built {
-		if err := i.registerSession(s); err != nil {
-			errs = append(errs, fmt.Errorf("registering session %v: %w", sessionID, err))
-			continue
-		}
+		announceSession(s)
 		i.sessions[sessionID] = s
 		if i.runState == runStarted {
 			i.startSession(sessionID, configs[sessionID])
@@ -249,51 +265,6 @@ func (i *Initiator) Reload(ctx context.Context, settings *Settings) error {
 	i.globalLog.OnEventf("Reloaded settings: %d sessions added, %d removed, %d restarted",
 		len(changes.added), len(changes.removed), len(changes.changed))
 	return errors.Join(errs...)
-}
-
-// buildSessions builds, without registering or starting them, the sessions
-// Reload adds and restarts, and loads what is needed to connect them.
-// Restarted sessions take the store of the session they replace. If building
-// any session fails, buildSessions closes the stores it created and returns
-// the error.
-func (i *Initiator) buildSessions(changes sessionChanges) (map[SessionID]*session, map[SessionID]initiatorConfig, error) {
-	built := make(map[SessionID]*session, len(changes.added)+len(changes.changed))
-	configs := make(map[SessionID]initiatorConfig, len(built))
-	var fresh []*session
-	build := func(sessionID SessionID, sessionSettings *SessionSettings) error {
-		storeFactory := i.storeFactory
-		current := i.sessions[sessionID]
-		if current != nil {
-			storeFactory = existingStoreFactory{current.store}
-		}
-		cfg, err := loadInitiatorConfig(sessionSettings)
-		if err != nil {
-			return fmt.Errorf("session %v: %w", sessionID, err)
-		}
-		s, err := i.newSession(sessionID, storeFactory, sessionSettings, i.logFactory, i.app)
-		if err != nil {
-			return fmt.Errorf("session %v: %w", sessionID, err)
-		}
-		if current == nil {
-			fresh = append(fresh, s)
-		}
-		built[sessionID] = s
-		configs[sessionID] = cfg
-		return nil
-	}
-	for sessionID, sessionSettings := range changes.added {
-		if err := build(sessionID, sessionSettings); err != nil {
-			closeStores(fresh)
-			return nil, nil, err
-		}
-	}
-	for sessionID, sessionSettings := range changes.changed {
-		if err := build(sessionID, sessionSettings); err != nil {
-			closeStores(fresh)
-			return nil, nil, err
-		}
-	}
-	return built, configs, nil
 }
 
 // Registry returns the Registry the Initiator's sessions are registered in.

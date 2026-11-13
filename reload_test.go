@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -374,6 +375,399 @@ func TestAcceptorReloadBeforeRun(t *testing.T) {
 	conn.Close()
 	_, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	require.Error(t, err, "Run should not listen on A's port")
+}
+
+// hookStoreFactory creates memory stores, calling onCreate first, and counts
+// how many of each session's stores have been closed. It fails to create a
+// store for failFor.
+type hookStoreFactory struct {
+	onCreate func(SessionID)
+	failFor  SessionID
+	mu       sync.Mutex
+	closed   map[SessionID]int
+}
+
+func (f *hookStoreFactory) Create(sessionID SessionID, settings *SessionSettings) (MessageStore, error) {
+	if f.onCreate != nil {
+		f.onCreate(sessionID)
+	}
+	if sessionID == f.failFor {
+		return nil, fmt.Errorf("cannot create store for %v", sessionID)
+	}
+	store, err := NewMemoryStoreFactory().Create(sessionID, settings)
+	if err != nil {
+		return nil, err
+	}
+	return hookStore{MessageStore: store, factory: f, sessionID: sessionID}, nil
+}
+
+func (f *hookStoreFactory) closedStores(sessionID SessionID) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed[sessionID]
+}
+
+type hookStore struct {
+	MessageStore
+	factory   *hookStoreFactory
+	sessionID SessionID
+}
+
+func (s hookStore) Close() error {
+	s.factory.mu.Lock()
+	if s.factory.closed == nil {
+		s.factory.closed = make(map[SessionID]int)
+	}
+	s.factory.closed[s.sessionID]++
+	s.factory.mu.Unlock()
+	return s.MessageStore.Close()
+}
+
+// hookLogFactory creates session logs that do nothing, and counts how many of
+// each session's logs have been created and closed.
+type hookLogFactory struct {
+	mu              sync.Mutex
+	created, closed map[SessionID]int
+}
+
+func (f *hookLogFactory) Create() (Log, error) { return nullLog{}, nil }
+
+func (f *hookLogFactory) CreateSessionLog(sessionID SessionID, _ *SessionSettings) (Log, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.created == nil {
+		f.created = make(map[SessionID]int)
+	}
+	f.created[sessionID]++
+	return hookLog{factory: f, sessionID: sessionID}, nil
+}
+
+func (f *hookLogFactory) counts(sessionID SessionID) (created, closed int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.created[sessionID], f.closed[sessionID]
+}
+
+type hookLog struct {
+	nullLog
+	factory   *hookLogFactory
+	sessionID SessionID
+}
+
+func (l hookLog) Close() error {
+	l.factory.mu.Lock()
+	defer l.factory.mu.Unlock()
+	if l.factory.closed == nil {
+		l.factory.closed = make(map[SessionID]int)
+	}
+	l.factory.closed[l.sessionID]++
+	return nil
+}
+
+// TestReloadClosesSessionLogs checks that Reload closes the logs of the
+// sessions it removes, restarts, or builds and then discards because the
+// Reload fails.
+func TestReloadClosesSessionLogs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		global  map[string]string
+		session func(client string, extra ...string) map[string]string
+		id      func(client string) SessionID
+		reload  func(t *testing.T, stores MessageStoreFactory, settings *Settings, logs LogFactory, registry *Registry) func(context.Context, *Settings) error
+	}{
+		{
+			name:    "acceptor",
+			global:  reloadAcceptorGlobal,
+			session: func(client string, extra ...string) map[string]string { return acceptorSession(client, 5135, extra...) },
+			id:      serverSessionID,
+			reload: func(t *testing.T, stores MessageStoreFactory, settings *Settings, logs LogFactory, registry *Registry) func(context.Context, *Settings) error {
+				acceptor, err := NewAcceptor(newReloadApp(), stores, settings, logs, WithRegistry(registry))
+				require.NoError(t, err)
+				return acceptor.Reload
+			},
+		},
+		{
+			name:   "initiator",
+			global: reloadInitiatorGlobal,
+			session: func(client string, extra ...string) map[string]string {
+				return initiatorSession(client, 5135, extra...)
+			},
+			id: clientSessionID,
+			reload: func(t *testing.T, stores MessageStoreFactory, settings *Settings, logs LogFactory, registry *Registry) func(context.Context, *Settings) error {
+				initiator, err := NewInitiator(newReloadApp(), stores, settings, logs, WithRegistry(registry))
+				require.NoError(t, err)
+				return initiator.Reload
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stores := &hookStoreFactory{}
+			logs := &hookLogFactory{}
+			registry := NewRegistry()
+			reload := tc.reload(t, stores,
+				reloadSettings(t, tc.global, tc.session("A"), tc.session("B"), tc.session("C")), logs, registry)
+			closed := func(client string) int {
+				_, closed := logs.counts(tc.id(client))
+				return closed
+			}
+
+			// B is removed, C restarted and D added.
+			require.NoError(t, reload(context.Background(), reloadSettings(t, tc.global,
+				tc.session("A"), tc.session("C", config.LogonTimeout, "20"), tc.session("D"))))
+			assert.Equal(t, 0, closed("A"), "A's log should be open")
+			assert.Equal(t, 1, closed("B"), "removed B's log should be closed")
+			assert.Equal(t, 1, closed("C"), "the log of the C that was replaced should be closed")
+			assert.Equal(t, 0, closed("D"), "D's log should be open")
+
+			// F's store cannot be created, so the Reload fails having maybe
+			// built E first.
+			stores.failFor = tc.id("F")
+			require.Error(t, reload(context.Background(), reloadSettings(t, tc.global,
+				tc.session("A"), tc.session("C", config.LogonTimeout, "20"), tc.session("D"),
+				tc.session("E"), tc.session("F"))))
+			created, closedE := logs.counts(tc.id("E"))
+			assert.Equal(t, created, closedE, "every log built for E should be closed")
+			created, closedF := logs.counts(tc.id("F"))
+			assert.Equal(t, 1, created)
+			assert.Equal(t, 1, closedF, "F's log should be closed when its store cannot be created")
+			assert.Equal(t, 0, closed("A"))
+			assert.Equal(t, 1, closed("C"))
+			assert.Equal(t, 0, closed("D"))
+
+			// G is already registered, so the Reload fails once it has built
+			// every session, including a new C.
+			stores.failFor = SessionID{}
+			require.NoError(t, registry.register(&session{sessionID: tc.id("G")}))
+			require.Error(t, reload(context.Background(), reloadSettings(t, tc.global,
+				tc.session("A"), tc.session("C", config.LogonTimeout, "30"), tc.session("D"),
+				tc.session("G"))))
+			created, closedC := logs.counts(tc.id("C"))
+			assert.Equal(t, 1, created-closedC, "only the running C's log should be open")
+			created, closedG := logs.counts(tc.id("G"))
+			assert.Equal(t, created, closedG, "every log built for G should be closed")
+		})
+	}
+}
+
+// TestReloadRejectsStoreSettingsChange checks that Reload refuses to change
+// the store settings of a session it would restart, and that the session can
+// be moved to a new store by removing it and adding it again.
+func TestReloadRejectsStoreSettingsChange(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		global  map[string]string
+		session func(extra ...string) map[string]string
+		id      SessionID
+		engine  func(t *testing.T, settings *Settings) (reload func(context.Context, *Settings) error, current func() *session)
+	}{
+		{
+			name:    "acceptor",
+			global:  reloadAcceptorGlobal,
+			session: func(extra ...string) map[string]string { return acceptorSession("A", 5138, extra...) },
+			id:      serverSessionID("A"),
+			engine: func(t *testing.T, settings *Settings) (func(context.Context, *Settings) error, func() *session) {
+				acceptor, err := NewAcceptor(newReloadApp(), NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+				require.NoError(t, err)
+				return acceptor.Reload, func() *session { return acceptor.sessions[serverSessionID("A")] }
+			},
+		},
+		{
+			name:    "initiator",
+			global:  reloadInitiatorGlobal,
+			session: func(extra ...string) map[string]string { return initiatorSession("A", 5138, extra...) },
+			id:      clientSessionID("A"),
+			engine: func(t *testing.T, settings *Settings) (func(context.Context, *Settings) error, func() *session) {
+				initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(), settings, NewNullLogFactory(), WithRegistry(NewRegistry()))
+				require.NoError(t, err)
+				return initiator.Reload, func() *session { return initiator.sessions[clientSessionID("A")] }
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reload, current := tc.engine(t, reloadSettings(t, tc.global, tc.session(config.FileStorePath, "old")))
+			before := current()
+
+			err := reload(context.Background(), reloadSettings(t, tc.global,
+				tc.session(config.FileStorePath, "new", config.LogonTimeout, "20")))
+			require.ErrorContains(t, err, config.FileStorePath)
+			assert.True(t, before == current(), "A should not have been restarted")
+
+			require.NoError(t, reload(context.Background(), reloadSettings(t, tc.global)))
+			require.NoError(t, reload(context.Background(), reloadSettings(t, tc.global,
+				tc.session(config.FileStorePath, "new"))))
+			assert.NotNil(t, current(), "A should have been added again")
+		})
+	}
+}
+
+// TestInitiatorReloadFailsToRegister checks that a Reload that cannot
+// register a session it adds changes nothing, closes the store it built for
+// it, and can be retried.
+func TestInitiatorReloadFailsToRegister(t *testing.T) {
+	const port = 5133
+	registry := NewRegistry()
+	other := &session{sessionID: clientSessionID("B")}
+	conflict := true
+	// Another engine sharing the registry registers B while Reload is
+	// building it, after Reload has checked that B is not registered.
+	storeFactory := &hookStoreFactory{onCreate: func(sessionID SessionID) {
+		if conflict && sessionID == clientSessionID("B") {
+			require.NoError(t, registry.register(other))
+		}
+	}}
+	initiator, err := NewInitiator(newReloadApp(), storeFactory,
+		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)),
+		NewNullLogFactory(), WithRegistry(registry))
+	require.NoError(t, err)
+	runForTest(t, initiator)
+	sessionA := func() *session {
+		initiator.reloadMu.Lock()
+		defer initiator.reloadMu.Unlock()
+		return initiator.sessions[clientSessionID("A")]
+	}
+	require.Eventually(t, func() bool {
+		initiator.reloadMu.Lock()
+		defer initiator.reloadMu.Unlock()
+		return initiator.runState == runStarted
+	}, 5*time.Second, 10*time.Millisecond)
+	before := sessionA()
+
+	next := reloadSettings(t, reloadInitiatorGlobal,
+		initiatorSession("A", port, config.LogonTimeout, "20"), initiatorSession("B", port))
+	err = initiator.Reload(context.Background(), next)
+	require.ErrorIs(t, err, errDuplicateSessionID)
+	assert.True(t, before == sessionA(), "A should not have been restarted")
+	registered, _ := registry.lookup(clientSessionID("A"))
+	assert.True(t, before == registered, "the old A should still be registered")
+	registered, _ = registry.lookup(clientSessionID("B"))
+	assert.True(t, other == registered, "the other B should still be registered")
+	assert.Equal(t, 1, storeFactory.closedStores(clientSessionID("B")), "B's store should have been closed")
+
+	conflict = false
+	require.NoError(t, registry.UnregisterSession(clientSessionID("B")))
+	require.NoError(t, initiator.Reload(context.Background(), next))
+	registered, _ = registry.lookup(clientSessionID("B"))
+	require.NotNil(t, registered, "Reload should have retried B")
+	assert.True(t, other != registered, "B should be registered to the initiator")
+	assert.True(t, before != sessionA(), "A should have been restarted")
+}
+
+// TestAcceptorReloadRacesDynamicSession checks that a Reload that adds a
+// session changes nothing if a dynamic session with its SessionID logs on
+// while Reload is running, and can be retried once that session has gone.
+func TestAcceptorReloadRacesDynamicSession(t *testing.T) {
+	const port = 5134
+	global := map[string]string{config.HeartBtInt: "30", config.DynamicSessions: "Y"}
+	registry := NewRegistry()
+	var loggedOn atomic.Bool
+	var dynamicB *running
+	storeFactory := &hookStoreFactory{}
+	storeFactory.onCreate = func(sessionID SessionID) {
+		if sessionID != serverSessionID("B") || !loggedOn.CompareAndSwap(false, true) {
+			return
+		}
+		// B logs on as a dynamic session after Reload has checked that B is
+		// not registered.
+		initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(),
+			reloadSettings(t, reloadInitiatorGlobal, initiatorSession("B", port)),
+			NewNullLogFactory(), WithRegistry(NewRegistry()))
+		require.NoError(t, err)
+		dynamicB = runForTest(t, initiator)
+		require.Eventually(t, func() bool {
+			_, ok := registry.lookup(serverSessionID("B"))
+			return ok
+		}, 5*time.Second, 10*time.Millisecond)
+	}
+	acceptor, err := NewAcceptor(newReloadApp(), storeFactory,
+		reloadSettings(t, global, acceptorSession("A", port)),
+		NewNullLogFactory(), WithRegistry(registry))
+	require.NoError(t, err)
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
+	sessionA := func() *session {
+		acceptor.mu.RLock()
+		defer acceptor.mu.RUnlock()
+		return acceptor.sessions[serverSessionID("A")]
+	}
+	before := sessionA()
+
+	next := reloadSettings(t, global,
+		acceptorSession("A", port, config.LogonTimeout, "20"), acceptorSession("B", port))
+	err = acceptor.Reload(context.Background(), next)
+	require.ErrorIs(t, err, errDuplicateSessionID)
+	assert.True(t, before == sessionA(), "A should not have been restarted")
+	registered, _ := registry.lookup(serverSessionID("A"))
+	assert.True(t, before == registered, "the old A should still be registered")
+	assert.Equal(t, 1, storeFactory.closedStores(serverSessionID("B")), "static B's store should have been closed")
+
+	require.NoError(t, dynamicB.stop())
+	require.Eventually(t, func() bool {
+		_, ok := registry.lookup(serverSessionID("B"))
+		return !ok
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, acceptor.Reload(context.Background(), next))
+	acceptor.mu.RLock()
+	staticB := acceptor.sessions[serverSessionID("B")]
+	acceptor.mu.RUnlock()
+	require.NotNil(t, staticB, "Reload should have retried B")
+	registered, _ = registry.lookup(serverSessionID("B"))
+	assert.True(t, staticB == registered, "B should be registered to the static session")
+}
+
+// TestInitiatorRunAfterReloadFailsToRegister checks that Run starts only the
+// sessions an earlier Reload managed to register.
+func TestInitiatorRunAfterReloadFailsToRegister(t *testing.T) {
+	const port = 5132
+	registry := NewRegistry()
+	// Another engine sharing the registry registers B while Reload is
+	// building it, after Reload has checked that B is not registered.
+	storeFactory := &hookStoreFactory{onCreate: func(sessionID SessionID) {
+		if sessionID == clientSessionID("B") {
+			require.NoError(t, registry.register(&session{sessionID: sessionID}))
+		}
+	}}
+	initiator, err := NewInitiator(newReloadApp(), storeFactory,
+		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port)),
+		NewNullLogFactory(), WithRegistry(registry))
+	require.NoError(t, err)
+
+	err = initiator.Reload(context.Background(),
+		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", port), initiatorSession("B", port)))
+	require.ErrorIs(t, err, errDuplicateSessionID)
+
+	run := runForTest(t, initiator)
+	require.Eventually(t, func() bool {
+		initiator.reloadMu.Lock()
+		defer initiator.reloadMu.Unlock()
+		return initiator.runState == runStarted
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, run.stop())
+}
+
+// TestAcceptorReloadKeepsDynamicSessionPorts checks that, with
+// DynamicSessions, Reload keeps listening on a port no static session uses any
+// more, since dynamic sessions log on through it.
+func TestAcceptorReloadKeepsDynamicSessionPorts(t *testing.T) {
+	const port = 5136
+	global := map[string]string{config.HeartBtInt: "30", config.DynamicSessions: "Y"}
+	acceptorApp := newReloadApp()
+	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(),
+		reloadSettings(t, global, acceptorSession("A", port)),
+		NewNullLogFactory(), WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
+
+	// A moves to another port, so no static session uses port any more.
+	require.NoError(t, acceptor.Reload(context.Background(),
+		reloadSettings(t, global, acceptorSession("A", port+1))))
+
+	initiator, err := NewInitiator(newReloadApp(), NewMemoryStoreFactory(),
+		reloadSettings(t, reloadInitiatorGlobal, initiatorSession("X", port)),
+		NewNullLogFactory(), WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+	runForTest(t, initiator)
+	acceptorApp.waitLogons(t, "X", 1)
 }
 
 func TestReloadAfterRunFails(t *testing.T) {

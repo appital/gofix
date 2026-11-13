@@ -16,6 +16,9 @@
 package composite
 
 import (
+	"errors"
+	"io"
+
 	"github.com/appital/gofix"
 )
 
@@ -47,6 +50,18 @@ func (l compositeLog) OnEventf(format string, a ...any) {
 	}
 }
 
+// Close closes each of the logs that implements io.Closer, and returns their
+// errors.
+func (l compositeLog) Close() error {
+	var errs []error
+	for _, log := range l.logs {
+		if closer, ok := log.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
+	}
+	return errors.Join(errs...)
+}
+
 type compositeLogFactory struct {
 	logFactories []gofix.LogFactory
 }
@@ -68,6 +83,7 @@ func (clf compositeLogFactory) CreateSessionLog(sessionID gofix.SessionID, setti
 	for _, lf := range clf.logFactories {
 		log, err := lf.CreateSessionLog(sessionID, settings)
 		if err != nil {
+			_ = compositeLog{logs}.Close()
 			return nil, err
 		}
 		logs = append(logs, log)

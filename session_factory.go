@@ -102,9 +102,15 @@ func (f sessionFactory) registerSession(session *session) error {
 	if err := f.reg().register(session); err != nil {
 		return err
 	}
+	announceSession(session)
+	return nil
+}
+
+// announceSession tells the application of a registered session that it has
+// been created.
+func announceSession(session *session) {
 	session.sessionHandler.OnCreate(session.sessionID)
 	session.log.OnEvent("Created session")
-	return nil
 }
 
 func (f sessionFactory) newSession(
@@ -507,6 +513,7 @@ func (f sessionFactory) newSession(
 	}
 
 	if s.store, err = storeFactory.Create(s.sessionID, settings); err != nil {
+		_ = closeLog(s.log)
 		return
 	}
 

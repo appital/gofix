@@ -16,6 +16,7 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -30,6 +31,13 @@ import (
 type fileLog struct {
 	eventLogger   *log.Logger
 	messageLogger *log.Logger
+	eventFile     *os.File
+	messageFile   *os.File
+}
+
+// Close closes the log's files.
+func (l fileLog) Close() error {
+	return errors.Join(l.eventFile.Close(), l.messageFile.Close())
 }
 
 func (l fileLog) OnIncoming(msg []byte) {
@@ -82,9 +90,12 @@ func newFileLog(prefix string, logPath string) (fileLog, error) {
 
 	messageFile, err := os.OpenFile(messageLogName, fileFlags, os.ModePerm)
 	if err != nil {
+		_ = eventFile.Close()
 		return l, err
 	}
 
+	l.eventFile = eventFile
+	l.messageFile = messageFile
 	logFlag := log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC
 	l.eventLogger = log.New(eventFile, "", logFlag)
 	l.messageLogger = log.New(messageFile, "", logFlag)

@@ -206,7 +206,7 @@ func (l *sqlLog) getEntries(table string) ([]string, error) {
 }
 
 // Close closes the log's database connection.
-func (l *sqlLog) close() error {
+func (l *sqlLog) Close() error {
 	if l.db != nil {
 		l.db.Close()
 		l.db = nil

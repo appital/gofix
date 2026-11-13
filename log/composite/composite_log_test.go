@@ -16,7 +16,9 @@
 package composite
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -149,4 +151,44 @@ func TestCompositeLogOnEventfExpandsFormatArgs(t *testing.T) {
 			require.Equal(t, []string{tt.expected}, second.events)
 		})
 	}
+}
+
+// closingLog is a log that records whether it has been closed.
+type closingLog struct {
+	recordingLog
+	closed bool
+	err    error
+}
+
+func (l *closingLog) Close() error {
+	l.closed = true
+	return l.err
+}
+
+func TestCloseClosesLogs(t *testing.T) {
+	failure := errors.New("cannot close")
+	first, second := &closingLog{}, &closingLog{err: failure}
+	l, err := NewLogFactory([]gofix.LogFactory{
+		recordingLogFactory{&first.recordingLog},
+		closingLogFactory{first},
+		recordingLogFactory{&recordingLog{}},
+		closingLogFactory{second},
+	}).CreateSessionLog(gofix.SessionID{}, nil)
+	require.NoError(t, err)
+
+	closer, ok := l.(io.Closer)
+	require.True(t, ok, "composite log should implement io.Closer")
+	require.ErrorIs(t, closer.Close(), failure)
+	require.True(t, first.closed)
+	require.True(t, second.closed, "every log should be closed even if one fails")
+}
+
+type closingLogFactory struct {
+	log *closingLog
+}
+
+func (f closingLogFactory) Create() (gofix.Log, error) { return f.log, nil }
+
+func (f closingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
+	return f.log, nil
 }

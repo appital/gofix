@@ -17,13 +17,16 @@ package file
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
 	"testing"
 
 	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 func TestFileLog_NewFileLogFactory(t *testing.T) {
@@ -177,5 +180,30 @@ func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
 	unsafe := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "..", TargetCompID: "x/y"}
 	if _, err := factory.CreateSessionLog(unsafe, sessionSettings); err == nil {
 		t.Error("Should expect error for a SessionID that names a path")
+	}
+}
+
+func TestFileLog_Close(t *testing.T) {
+	settings := gofix.NewSettings()
+	settings.GlobalSettings().Set(config.FileLogPath, t.TempDir())
+	factory, err := NewLogFactory(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	log, err := factory.CreateSessionLog(sessionID, settings.GlobalSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	closer, ok := log.(io.Closer)
+	if !ok {
+		t.Fatal("file log should implement io.Closer")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := closer.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("closing again should fail with os.ErrClosed, got %v", err)
 	}
 }
