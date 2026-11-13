@@ -26,9 +26,7 @@ import (
 	"github.com/appital/gofix/config"
 )
 
-type sqlLogFactory struct {
-	settings *gofix.Settings
-}
+type sqlLogFactory struct{}
 
 type sqlLog struct {
 	sessionID          gofix.SessionID
@@ -59,15 +57,15 @@ func postgresPlaceholder(i int) string {
 	return fmt.Sprintf("$%d", i+1)
 }
 
-// NewLogFactory returns a sql-based implementation of LogFactory.
-func NewLogFactory(settings *gofix.Settings) gofix.LogFactory {
-	return sqlLogFactory{settings: settings}
+// NewLogFactory returns a sql-based implementation of LogFactory. The global
+// log and each session's log are configured by the settings they are created
+// with.
+func NewLogFactory() gofix.LogFactory {
+	return sqlLogFactory{}
 }
 
 // Create creates a new SQLLog implementation of the Log interface.
-func (f sqlLogFactory) Create() (log gofix.Log, err error) {
-	globalSettings := f.settings.GlobalSettings()
-
+func (f sqlLogFactory) Create(globalSettings *gofix.SessionSettings) (log gofix.Log, err error) {
 	sqlDriver, err := globalSettings.Setting(config.SQLLogDriver)
 	if err != nil {
 		return nil, err

@@ -24,7 +24,7 @@ func (l nullLog) OnEventf(_ string, _ ...any) {}
 
 type nullLogFactory struct{}
 
-func (nullLogFactory) Create() (Log, error) {
+func (nullLogFactory) Create(*SessionSettings) (Log, error) {
 	return nullLog{}, nil
 }
 func (nullLogFactory) CreateSessionLog(SessionID, *SessionSettings) (Log, error) {

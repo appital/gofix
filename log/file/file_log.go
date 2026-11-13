@@ -56,20 +56,14 @@ func (l fileLog) OnEventf(format string, v ...any) {
 	l.eventLogger.Printf(format, v...)
 }
 
-type fileLogFactory struct {
-	globalLogPath string
-}
+type fileLogFactory struct{}
 
 // NewLogFactory creates an instance of LogFactory that writes messages and events to file.
 // The location of global and session log files is configured via FileLogPath.
 // The global log is written to the global FileLogPath, and each session's log
 // to the FileLogPath in its settings.
-func NewLogFactory(settings *gofix.Settings) (gofix.LogFactory, error) {
-	globalLogPath, err := settings.GlobalSettings().Setting(config.FileLogPath)
-	if err != nil {
-		return fileLogFactory{}, err
-	}
-	return fileLogFactory{globalLogPath: globalLogPath}, nil
+func NewLogFactory() gofix.LogFactory {
+	return fileLogFactory{}
 }
 
 func newFileLog(prefix string, logPath string) (fileLog, error) {
@@ -103,8 +97,12 @@ func newFileLog(prefix string, logPath string) (fileLog, error) {
 	return l, nil
 }
 
-func (f fileLogFactory) Create() (gofix.Log, error) {
-	return newFileLog("GLOBAL", f.globalLogPath)
+func (f fileLogFactory) Create(settings *gofix.SessionSettings) (gofix.Log, error) {
+	logPath, err := settings.Setting(config.FileLogPath)
+	if err != nil {
+		return nil, err
+	}
+	return newFileLog("GLOBAL", logPath)
 }
 
 func (f fileLogFactory) CreateSessionLog(sessionID gofix.SessionID, settings *gofix.SessionSettings) (gofix.Log, error) {

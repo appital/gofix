@@ -430,7 +430,7 @@ type hookLogFactory struct {
 	created, closed map[SessionID]int
 }
 
-func (f *hookLogFactory) Create() (Log, error) { return nullLog{}, nil }
+func (f *hookLogFactory) Create(*SessionSettings) (Log, error) { return nullLog{}, nil }
 
 func (f *hookLogFactory) CreateSessionLog(sessionID SessionID, _ *SessionSettings) (Log, error) {
 	f.mu.Lock()

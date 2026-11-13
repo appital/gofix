@@ -47,7 +47,7 @@ func (l screenLog) OnEventf(format string, a ...any) {
 
 type screenLogFactory struct{}
 
-func (screenLogFactory) Create() (gofix.Log, error) {
+func (screenLogFactory) Create(*gofix.SessionSettings) (gofix.Log, error) {
 	log := screenLog{"GLOBAL"}
 	return log, nil
 }

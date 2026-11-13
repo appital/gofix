@@ -939,7 +939,7 @@ const (
 	FileLogPath string = "FileLogPath"
 
 	// SQLLogDriver sets the name of the database driver to use for application logs (see https://go.dev/wiki/SQLDrivers for the list of available drivers).
-	// SQLLogDriver is only relevant if also using sql.NewLogFactory(..) in code
+	// SQLLogDriver is only relevant if also using sql.NewLogFactory() in code
 	// when creating your LogFactory for your initiator or acceptor.
 	//
 	// Required: Only if using a sql db as your Log
@@ -952,7 +952,7 @@ const (
 
 	// SQLLogDataSourceName sets the driver-specific data source name of the database to use for application logs.
 	// This usually consists of at least a database name and connection information.
-	// SQLLogDataSourceName is only relevant if also using sql.NewLogFactory(..) in code
+	// SQLLogDataSourceName is only relevant if also using sql.NewLogFactory() in code
 	// when creating your LogFactory for your initiator or acceptor.
 	//
 	// See https://pkg.go.dev/database/sql#Open for more information.
@@ -975,7 +975,7 @@ const (
 	//  - SQLLogConnMaxLifetime=14400s # 14400 seconds
 	//  - SQLLogConnMaxLifetime=2h45m  # 2 hours and 45 minutes
 	//
-	// SQLLogConnMaxLifetime is only relevant if also using sql.NewLogFactory(..) in code
+	// SQLLogConnMaxLifetime is only relevant if also using sql.NewLogFactory() in code
 	// when creating your LogFactory for your initiator or acceptor.
 	//
 	// Required: No

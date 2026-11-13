@@ -72,20 +72,19 @@ TargetCompID=%s`, logPath, sqlDriver, sqlDsn, sessionID.BeginString, sessionID.S
 func (suite *CompositeLogTestSuite) TestCreateLogNoSession() {
 
 	screenLogFactory := screen.NewLogFactory()
-	sqlLogFactory := sql.NewLogFactory(suite.settings)
+	sqlLogFactory := sql.NewLogFactory()
 	// create log
-	_, err := NewLogFactory([]gofix.LogFactory{screenLogFactory, sqlLogFactory}).Create()
+	_, err := NewLogFactory([]gofix.LogFactory{screenLogFactory, sqlLogFactory}).Create(suite.settings.GlobalSettings())
 	require.Nil(suite.T(), err)
 }
 
 func (suite *CompositeLogTestSuite) TestCreateLogSession() {
 
 	screenLogFactory := screen.NewLogFactory()
-	fileLogFactory, err := file.NewLogFactory(suite.settings)
-	require.Nil(suite.T(), err)
+	fileLogFactory := file.NewLogFactory()
 
 	// create log
-	_, err = NewLogFactory([]gofix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
+	_, err := NewLogFactory([]gofix.LogFactory{screenLogFactory, fileLogFactory}).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.Nil(suite.T(), err)
 }
 
@@ -113,12 +112,19 @@ func (r *recordingLog) OnEventf(format string, a ...any) {
 	r.events = append(r.events, fmt.Sprintf(format, a...))
 }
 
-// recordingLogFactory hands out one pre-built recordingLog.
+// recordingLogFactory hands out one pre-built recordingLog, and records the
+// settings the global log was created with.
 type recordingLogFactory struct {
-	log *recordingLog
+	log            *recordingLog
+	globalSettings **gofix.SessionSettings
 }
 
-func (f recordingLogFactory) Create() (gofix.Log, error) { return f.log, nil }
+func (f recordingLogFactory) Create(settings *gofix.SessionSettings) (gofix.Log, error) {
+	if f.globalSettings != nil {
+		*f.globalSettings = settings
+	}
+	return f.log, nil
+}
 
 func (f recordingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
 	return f.log, nil
@@ -140,9 +146,9 @@ func TestCompositeLogOnEventfExpandsFormatArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			first, second := &recordingLog{}, &recordingLog{}
 			l, err := NewLogFactory([]gofix.LogFactory{
-				recordingLogFactory{first},
-				recordingLogFactory{second},
-			}).Create()
+				recordingLogFactory{log: first},
+				recordingLogFactory{log: second},
+			}).Create(nil)
 			require.NoError(t, err)
 
 			l.OnEventf(tt.format, tt.args...)
@@ -169,9 +175,9 @@ func TestCloseClosesLogs(t *testing.T) {
 	failure := errors.New("cannot close")
 	first, second := &closingLog{}, &closingLog{err: failure}
 	l, err := NewLogFactory([]gofix.LogFactory{
-		recordingLogFactory{&first.recordingLog},
+		recordingLogFactory{log: &first.recordingLog},
 		closingLogFactory{first},
-		recordingLogFactory{&recordingLog{}},
+		recordingLogFactory{log: &recordingLog{}},
 		closingLogFactory{second},
 	}).CreateSessionLog(gofix.SessionID{}, nil)
 	require.NoError(t, err)
@@ -187,8 +193,60 @@ type closingLogFactory struct {
 	log *closingLog
 }
 
-func (f closingLogFactory) Create() (gofix.Log, error) { return f.log, nil }
+func (f closingLogFactory) Create(*gofix.SessionSettings) (gofix.Log, error) { return f.log, nil }
 
 func (f closingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
 	return f.log, nil
+}
+
+// failingLogFactory fails to create any log.
+type failingLogFactory struct {
+	err error
+}
+
+func (f failingLogFactory) Create(*gofix.SessionSettings) (gofix.Log, error) { return nil, f.err }
+
+func (f failingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
+	return nil, f.err
+}
+
+// TestCreateClosesLogsOnFailure checks that when one factory fails, the logs
+// the earlier factories created are closed rather than leaked.
+func TestCreateClosesLogsOnFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		create func(gofix.LogFactory) (gofix.Log, error)
+	}{
+		{name: "Create", create: func(f gofix.LogFactory) (gofix.Log, error) {
+			return f.Create(gofix.NewSessionSettings())
+		}},
+		{name: "CreateSessionLog", create: func(f gofix.LogFactory) (gofix.Log, error) {
+			return f.CreateSessionLog(gofix.SessionID{}, gofix.NewSessionSettings())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := errors.New("cannot create")
+			opened := &closingLog{}
+			l, err := tc.create(NewLogFactory([]gofix.LogFactory{
+				closingLogFactory{opened},
+				failingLogFactory{failure},
+			}))
+			require.ErrorIs(t, err, failure)
+			require.Nil(t, l)
+			require.True(t, opened.closed, "logs created before the failure should be closed")
+		})
+	}
+}
+
+func TestCreatePassesGlobalSettings(t *testing.T) {
+	settings := gofix.NewSessionSettings()
+	var first, second *gofix.SessionSettings
+	_, err := NewLogFactory([]gofix.LogFactory{
+		recordingLogFactory{log: &recordingLog{}, globalSettings: &first},
+		recordingLogFactory{log: &recordingLog{}, globalSettings: &second},
+	}).Create(settings)
+	require.NoError(t, err)
+
+	require.Same(t, settings, first)
+	require.Same(t, settings, second)
 }

@@ -163,7 +163,7 @@ func (l *textLog) String() string {
 
 type textLogFactory struct{ log *textLog }
 
-func (f textLogFactory) Create() (Log, error)                                      { return f.log, nil }
+func (f textLogFactory) Create(*SessionSettings) (Log, error)                      { return f.log, nil }
 func (f textLogFactory) CreateSessionLog(SessionID, *SessionSettings) (Log, error) { return f.log, nil }
 
 func TestRedactingLog(t *testing.T) {

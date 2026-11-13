@@ -548,7 +548,7 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings *Se
 		}
 	}
 
-	if a.globalLog, err = logFactory.Create(); err != nil {
+	if a.globalLog, err = logFactory.Create(settings.GlobalSettings()); err != nil {
 		return
 	}
 	globalRedactor, err := redactorFromSettings(settings.GlobalSettings())

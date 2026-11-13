@@ -293,7 +293,7 @@ func NewInitiator(app Application, storeFactory MessageStoreFactory, appSettings
 	}
 
 	var err error
-	i.globalLog, err = logFactory.Create()
+	i.globalLog, err = logFactory.Create(appSettings.GlobalSettings())
 	if err != nil {
 		return i, err
 	}

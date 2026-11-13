@@ -101,7 +101,7 @@ func TestAcceptor_SetTLSConfig(t *testing.T) {
 	_, err := genericSettings.AddSession(sessionSettings)
 	require.NoError(t, err)
 
-	logger, err := NewNullLogFactory().Create()
+	logger, err := NewNullLogFactory().Create(nil)
 	require.NoError(t, err)
 	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
@@ -142,7 +142,7 @@ func TestAcceptor_SetCallback(t *testing.T) {
 	_, err := genericSettings.AddSession(sessionSettings)
 	require.NoError(t, err)
 
-	logger, err := NewNullLogFactory().Create()
+	logger, err := NewNullLogFactory().Create(nil)
 	require.NoError(t, err)
 	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function

@@ -66,11 +66,12 @@ type compositeLogFactory struct {
 	logFactories []gofix.LogFactory
 }
 
-func (clf compositeLogFactory) Create() (gofix.Log, error) {
+func (clf compositeLogFactory) Create(settings *gofix.SessionSettings) (gofix.Log, error) {
 	logs := []gofix.Log{}
 	for _, lf := range clf.logFactories {
-		log, err := lf.Create()
+		log, err := lf.Create(settings)
 		if err != nil {
+			_ = compositeLog{logs}.Close()
 			return nil, err
 		}
 		logs = append(logs, log)

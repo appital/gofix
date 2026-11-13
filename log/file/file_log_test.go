@@ -22,51 +22,33 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 	"testing"
 
 	"github.com/appital/gofix"
 	"github.com/appital/gofix/config"
 )
 
-func TestFileLog_NewFileLogFactory(t *testing.T) {
+// TestFileLog_CreateUsesGlobalSettings checks that the global log is written
+// to the FileLogPath in the settings it is created with.
+func TestFileLog_CreateUsesGlobalSettings(t *testing.T) {
+	factory := NewLogFactory()
 
-	_, err := NewLogFactory(gofix.NewSettings())
-
-	if err == nil {
-		t.Error("Should expect error when settings have no file log path")
+	if _, err := factory.Create(gofix.NewSessionSettings()); err == nil {
+		t.Error("Should expect error when global settings have no file log path")
 	}
 
-	cfg := `
-# default settings for sessions
-[DEFAULT]
-ConnectionType=initiator
-ReconnectInterval=60
-SenderCompID=TW
-FileLogPath=.
-
-# session definition
-[SESSION]
-BeginString=FIX.4.1
-TargetCompID=ARCA
-FileLogPath=mydir
-
-[SESSION]
-BeginString=FIX.4.1
-TargetCompID=ARCA
-SessionQualifier=BS
-`
-	stringReader := strings.NewReader(cfg)
-	settings, _ := gofix.ParseSettings(stringReader)
-
-	factory, err := NewLogFactory(settings)
-
+	logDir := t.TempDir()
+	settings := gofix.NewSessionSettings()
+	settings.Set(config.FileLogPath, logDir)
+	log, err := factory.Create(settings)
 	if err != nil {
-		t.Error("Did not expect error", err)
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = log.(io.Closer).Close() })
 
-	if factory == nil {
-		t.Error("Should have returned factory")
+	expected := path.Join(logDir, "GLOBAL.event.current.log")
+	if _, err := os.Stat(expected); err != nil {
+		t.Errorf("%v should exist: %v", expected, err)
 	}
 }
 
@@ -150,16 +132,9 @@ func TestFileLog_Append(t *testing.T) {
 }
 
 // TestFileLog_CreateSessionLogUsesSessionSettings checks that a session's log
-// is written to the FileLogPath in the settings it is created with, even for a
-// session the factory's own settings do not contain, such as one added by
-// Reload.
+// is written to the FileLogPath in the settings it is created with.
 func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
-	settings := gofix.NewSettings()
-	settings.GlobalSettings().Set("FileLogPath", t.TempDir())
-	factory, err := NewLogFactory(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
+	factory := NewLogFactory()
 
 	sessionDir := t.TempDir()
 	sessionSettings := gofix.NewSessionSettings()
@@ -184,14 +159,11 @@ func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
 }
 
 func TestFileLog_Close(t *testing.T) {
-	settings := gofix.NewSettings()
-	settings.GlobalSettings().Set(config.FileLogPath, t.TempDir())
-	factory, err := NewLogFactory(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
+	settings := gofix.NewSessionSettings()
+	settings.Set(config.FileLogPath, t.TempDir())
+	factory := NewLogFactory()
 	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "TARGET"}
-	log, err := factory.CreateSessionLog(sessionID, settings.GlobalSettings())
+	log, err := factory.CreateSessionLog(sessionID, settings)
 	if err != nil {
 		t.Fatal(err)
 	}

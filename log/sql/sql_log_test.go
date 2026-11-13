@@ -81,7 +81,7 @@ TargetCompID=%s`, sqlDriver, sqlDsn, sessionID.BeginString, sessionID.SenderComp
 
 func (suite *SQLLogTestSuite) TestSQLLogNoSession() {
 	// create log
-	log, err := NewLogFactory(suite.settings).Create()
+	log, err := NewLogFactory().Create(suite.settings.GlobalSettings())
 	require.Nil(suite.T(), err)
 	suite.log = log.(*sqlLog)
 
@@ -104,7 +104,7 @@ func (suite *SQLLogTestSuite) TestSQLLogNoSession() {
 
 func (suite *SQLLogTestSuite) TestSQLLog() {
 	// create log
-	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
+	log, err := NewLogFactory().CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.Nil(suite.T(), err)
 	suite.log = log.(*sqlLog)
 
@@ -126,7 +126,7 @@ func (suite *SQLLogTestSuite) TestSQLLog() {
 }
 
 func (suite *SQLLogTestSuite) TestSQLLogClose() {
-	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
+	log, err := NewLogFactory().CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.NoError(suite.T(), err)
 	suite.log = log.(*sqlLog)
 
