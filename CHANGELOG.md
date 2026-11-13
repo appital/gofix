@@ -5,7 +5,8 @@
   ```go
   func (f myStoreFactory) Create(sessionID gofix.SessionID, _ *gofix.SessionSettings) (gofix.MessageStore, error)
   ```
-* `file.NewStoreFactory` and `sql.NewStoreFactory` no longer take a `*Settings`, since each store is configured from its session's settings. Replace `file.NewStoreFactory(settings)` with `file.NewStoreFactory()`. `file.NewLogFactory` and `sql.NewLogFactory` still take `*Settings`, for the global log
+* `LogFactory.Create` now takes the global settings: `Create(settings *SessionSettings)`. A custom factory should read what it needs for the global log from `settings`, and can ignore the argument if it needs none
+* `file.NewStoreFactory`, `sql.NewStoreFactory`, `file.NewLogFactory` and `sql.NewLogFactory` no longer take a `*Settings`, since each store and log is configured from the settings it is created with. Replace `file.NewStoreFactory(settings)` with `file.NewStoreFactory()` and `sql.NewLogFactory(settings)` with `sql.NewLogFactory()`. `file.NewLogFactory()` no longer returns an error; a missing global `FileLogPath` is now reported when the engine is created
 * The file log now writes a dynamic session's log under the global `FileLogPath`. It used to refuse to create a log for a session that was not in the settings it was built with, so an acceptor could not create dynamic sessions with it
 
 ### FEATURES

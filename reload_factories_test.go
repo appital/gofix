@@ -67,9 +67,7 @@ func TestReloadAddsSessionWithFileStoreAndLog(t *testing.T) {
 				return map[string]string{config.SenderCompID: "SERVER", config.TargetCompID: target, config.SocketAcceptPort: "5131"}
 			},
 			reload: func(t *testing.T, settings *gofix.Settings, registry *gofix.Registry) func(context.Context, *gofix.Settings) error {
-				logFactory, err := filelog.NewLogFactory(settings)
-				require.NoError(t, err)
-				acceptor, err := gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), settings, logFactory, gofix.WithRegistry(registry))
+				acceptor, err := gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory(), gofix.WithRegistry(registry))
 				require.NoError(t, err)
 				return acceptor.Reload
 			},
@@ -81,9 +79,7 @@ func TestReloadAddsSessionWithFileStoreAndLog(t *testing.T) {
 					config.SocketConnectHost: "127.0.0.1", config.SocketConnectPort: "5131"}
 			},
 			reload: func(t *testing.T, settings *gofix.Settings, registry *gofix.Registry) func(context.Context, *gofix.Settings) error {
-				logFactory, err := filelog.NewLogFactory(settings)
-				require.NoError(t, err)
-				initiator, err := gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), settings, logFactory, gofix.WithRegistry(registry))
+				initiator, err := gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory(), gofix.WithRegistry(registry))
 				require.NoError(t, err)
 				return initiator.Reload
 			},
@@ -103,6 +99,41 @@ func TestReloadAddsSessionWithFileStoreAndLog(t *testing.T) {
 			require.NoError(t, err)
 			requireFiles(t, filepath.Join(dir, "B", "store"))
 			requireFiles(t, filepath.Join(dir, "B", "log"))
+		})
+	}
+}
+
+// TestEngineCreatesGlobalLogFromGlobalSettings checks that the engine passes
+// its global settings to LogFactory.Create, so that the file log writes the
+// global log to the global FileLogPath.
+func TestEngineCreatesGlobalLogFromGlobalSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session map[string]string
+		create  func(*gofix.Settings) error
+	}{
+		{
+			name:    "acceptor",
+			session: map[string]string{config.SenderCompID: "SERVER", config.TargetCompID: "A", config.SocketAcceptPort: "5131"},
+			create: func(settings *gofix.Settings) error {
+				_, err := gofix.NewAcceptor(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory())
+				return err
+			},
+		},
+		{
+			name: "initiator",
+			session: map[string]string{config.SenderCompID: "CLIENT", config.TargetCompID: "A",
+				config.SocketConnectHost: "127.0.0.1", config.SocketConnectPort: "5131"},
+			create: func(settings *gofix.Settings) error {
+				_, err := gofix.NewInitiator(nopApp{}, file.NewStoreFactory(), settings, filelog.NewLogFactory())
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, tc.create(fileSettings(t, dir, nil, tc.session)))
+			assert.FileExists(t, filepath.Join(dir, "global", "GLOBAL.event.current.log"))
 		})
 	}
 }

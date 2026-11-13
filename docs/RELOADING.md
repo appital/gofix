@@ -36,6 +36,8 @@ A change to a global setting changes the effective settings of every session tha
 
 The engine passes each new session's effective settings to the `MessageStoreFactory`, and each new or restarted session's to the `LogFactory`, so the built-in file and SQL stores and logs, and custom factories that read the settings they are given, work for sessions that were not in the settings the engine was built with.
 
+The global log is created once, by `LogFactory.Create` with the global settings the engine was built with. `Reload` does not recreate it, so a change to a global log setting such as `FileLogPath` applies to the sessions that inherit it, but the global log stays where it is.
+
 Sessions an acceptor creates for `DynamicSessions` are not in the settings, so `Reload` leaves them alone. They can log on through any port the acceptor listens on, so with `DynamicSessions` set, `Reload` opens listeners for new ports but never closes one; the acceptor keeps listening on them until `Run` returns. Dynamic sessions created after a `Reload` take its global settings.
 
 ## All or nothing

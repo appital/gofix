@@ -127,11 +127,7 @@ func main() {
 		return
 	}
 
-	fileLogFactory, err := filelog.NewLogFactory(appSettings)
-	if err != nil {
-		fmt.Println("Error creating file log factory:", err)
-		return
-	}
+	fileLogFactory := filelog.NewLogFactory()
 	//fileLogFactory := gofix.NewScreenLogFactory()
 	// if err != nil {
 	// 	fmt.Println("Error creating file log factory:", err)
