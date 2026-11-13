@@ -72,7 +72,7 @@ TargetCompID=%s`, sqlDriver, sqlDsn, sessionID.BeginString, sessionID.SenderComp
 	require.Nil(suite.T(), err)
 
 	// create store
-	suite.MsgStore, err = NewStoreFactory(settings).Create(sessionID)
+	suite.MsgStore, err = NewStoreFactory().Create(sessionID, settings.SessionSettings()[sessionID])
 	require.Nil(suite.T(), err)
 }
 
@@ -121,7 +121,7 @@ TargetCompID=%s
 	require.NoError(suite.T(), err)
 
 	// Create store with renamed table config
-	store, err := NewStoreFactory(settings).Create(sessionID)
+	store, err := NewStoreFactory().Create(sessionID, settings.SessionSettings()[sessionID])
 	require.NoError(suite.T(), err)
 	defer store.Close()
 

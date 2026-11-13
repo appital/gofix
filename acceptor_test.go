@@ -68,7 +68,7 @@ func TestAcceptor_Start(t *testing.T) {
 				assert.Nil(t, err)
 			}
 
-			acceptor := &Acceptor{settings: tt.settings}
+			acceptor := &Acceptor{settings: tt.settings, sessionSettings: tt.settings.SessionSettings()}
 			if _, err := startForTest(t, acceptor); err != nil {
 				assert.NotNil(t, err)
 			}
@@ -103,7 +103,7 @@ func TestAcceptor_SetTLSConfig(t *testing.T) {
 
 	logger, err := NewNullLogFactory().Create()
 	require.NoError(t, err)
-	acceptor := &Acceptor{settings: genericSettings, globalLog: logger}
+	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -144,7 +144,7 @@ func TestAcceptor_SetCallback(t *testing.T) {
 
 	logger, err := NewNullLogFactory().Create()
 	require.NoError(t, err)
-	acceptor := &Acceptor{settings: genericSettings, globalLog: logger}
+	acceptor := &Acceptor{settings: genericSettings, sessionSettings: genericSettings.SessionSettings(), globalLog: logger}
 	// example of a customized tls.Config that loads the certificates dynamically by the `GetCertificate` function
 	// as opposed to the Certificates slice, that is static in nature, and is only populated once and needs application restart to reload the certs.
 	customizedTLSConfig := tls.Config{
@@ -401,11 +401,11 @@ type recordingStoreFactory struct {
 	created []SessionID
 }
 
-func (f *recordingStoreFactory) Create(sessionID SessionID) (MessageStore, error) {
+func (f *recordingStoreFactory) Create(sessionID SessionID, settings *SessionSettings) (MessageStore, error) {
 	f.mu.Lock()
 	f.created = append(f.created, sessionID)
 	f.mu.Unlock()
-	return NewMemoryStoreFactory().Create(sessionID)
+	return NewMemoryStoreFactory().Create(sessionID, settings)
 }
 
 func TestAcceptor_DynamicSessionRefusesUnsafeID(t *testing.T) {

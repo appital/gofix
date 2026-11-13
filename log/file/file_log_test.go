@@ -17,13 +17,16 @@ package file
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
 	"testing"
 
 	"github.com/appital/gofix"
+	"github.com/appital/gofix/config"
 )
 
 func TestFileLog_NewFileLogFactory(t *testing.T) {
@@ -143,5 +146,64 @@ func TestFileLog_Append(t *testing.T) {
 	newHelper.Log.OnEvent("Event")
 	if !eventScanner.Scan() {
 		t.Error("Unexpected EOF")
+	}
+}
+
+// TestFileLog_CreateSessionLogUsesSessionSettings checks that a session's log
+// is written to the FileLogPath in the settings it is created with, even for a
+// session the factory's own settings do not contain, such as one added by
+// Reload.
+func TestFileLog_CreateSessionLogUsesSessionSettings(t *testing.T) {
+	settings := gofix.NewSettings()
+	settings.GlobalSettings().Set("FileLogPath", t.TempDir())
+	factory, err := NewLogFactory(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionDir := t.TempDir()
+	sessionSettings := gofix.NewSessionSettings()
+	sessionSettings.Set("FileLogPath", sessionDir)
+	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "ADDED"}
+	if _, err := factory.CreateSessionLog(sessionID, sessionSettings); err != nil {
+		t.Fatal(err)
+	}
+	expected := path.Join(sessionDir, sessionIDFilenamePrefix(sessionID)+".event.current.log")
+	if _, err := os.Stat(expected); err != nil {
+		t.Errorf("%v should exist: %v", expected, err)
+	}
+
+	if _, err := factory.CreateSessionLog(sessionID, gofix.NewSessionSettings()); err == nil {
+		t.Error("Should expect error when session settings have no file log path")
+	}
+
+	unsafe := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "..", TargetCompID: "x/y"}
+	if _, err := factory.CreateSessionLog(unsafe, sessionSettings); err == nil {
+		t.Error("Should expect error for a SessionID that names a path")
+	}
+}
+
+func TestFileLog_Close(t *testing.T) {
+	settings := gofix.NewSettings()
+	settings.GlobalSettings().Set(config.FileLogPath, t.TempDir())
+	factory, err := NewLogFactory(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := gofix.SessionID{BeginString: "FIX.4.2", SenderCompID: "SENDER", TargetCompID: "TARGET"}
+	log, err := factory.CreateSessionLog(sessionID, settings.GlobalSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	closer, ok := log.(io.Closer)
+	if !ok {
+		t.Fatal("file log should implement io.Closer")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := closer.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("closing again should fail with os.ErrClosed, got %v", err)
 	}
 }

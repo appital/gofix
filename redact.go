@@ -234,6 +234,9 @@ func newRedactingLog(log Log, r *redactor) Log {
 	return redactingLog{Log: log, redactor: r}
 }
 
+// Close closes the wrapped log if it implements io.Closer.
+func (l redactingLog) Close() error { return closeLog(l.Log) }
+
 func (l redactingLog) OnIncoming(msg []byte) { l.Log.OnIncoming(l.redactor.redact(msg)) }
 
 func (l redactingLog) OnOutgoing(msg []byte) { l.Log.OnOutgoing(l.redactor.redact(msg)) }

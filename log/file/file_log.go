@@ -16,10 +16,13 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 
 	"github.com/appital/gofix"
 	"github.com/appital/gofix/config"
@@ -28,6 +31,13 @@ import (
 type fileLog struct {
 	eventLogger   *log.Logger
 	messageLogger *log.Logger
+	eventFile     *os.File
+	messageFile   *os.File
+}
+
+// Close closes the log's files.
+func (l fileLog) Close() error {
+	return errors.Join(l.eventFile.Close(), l.messageFile.Close())
 }
 
 func (l fileLog) OnIncoming(msg []byte) {
@@ -47,31 +57,19 @@ func (l fileLog) OnEventf(format string, v ...any) {
 }
 
 type fileLogFactory struct {
-	globalLogPath   string
-	sessionLogPaths map[gofix.SessionID]string
+	globalLogPath string
 }
 
 // NewLogFactory creates an instance of LogFactory that writes messages and events to file.
 // The location of global and session log files is configured via FileLogPath.
+// The global log is written to the global FileLogPath, and each session's log
+// to the FileLogPath in its settings.
 func NewLogFactory(settings *gofix.Settings) (gofix.LogFactory, error) {
-	logFactory := fileLogFactory{}
-
-	var err error
-	if logFactory.globalLogPath, err = settings.GlobalSettings().Setting(config.FileLogPath); err != nil {
-		return logFactory, err
+	globalLogPath, err := settings.GlobalSettings().Setting(config.FileLogPath)
+	if err != nil {
+		return fileLogFactory{}, err
 	}
-
-	logFactory.sessionLogPaths = make(map[gofix.SessionID]string)
-
-	for sid, sessionSettings := range settings.SessionSettings() {
-		logPath, err := sessionSettings.Setting(config.FileLogPath)
-		if err != nil {
-			return logFactory, err
-		}
-		logFactory.sessionLogPaths[sid] = logPath
-	}
-
-	return logFactory, nil
+	return fileLogFactory{globalLogPath: globalLogPath}, nil
 }
 
 func newFileLog(prefix string, logPath string) (fileLog, error) {
@@ -92,9 +90,12 @@ func newFileLog(prefix string, logPath string) (fileLog, error) {
 
 	messageFile, err := os.OpenFile(messageLogName, fileFlags, os.ModePerm)
 	if err != nil {
+		_ = eventFile.Close()
 		return l, err
 	}
 
+	l.eventFile = eventFile
+	l.messageFile = messageFile
 	logFlag := log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC
 	l.eventLogger = log.New(eventFile, "", logFlag)
 	l.messageLogger = log.New(messageFile, "", logFlag)
@@ -106,13 +107,17 @@ func (f fileLogFactory) Create() (gofix.Log, error) {
 	return newFileLog("GLOBAL", f.globalLogPath)
 }
 
-func (f fileLogFactory) CreateSessionLog(sessionID gofix.SessionID) (gofix.Log, error) {
-	logPath, ok := f.sessionLogPaths[sessionID]
-
-	if !ok {
-		return nil, fmt.Errorf("logger not defined for %v", sessionID)
+func (f fileLogFactory) CreateSessionLog(sessionID gofix.SessionID, settings *gofix.SessionSettings) (gofix.Log, error) {
+	logPath, err := settings.Setting(config.FileLogPath)
+	if err != nil {
+		return nil, err
 	}
 
 	prefix := sessionIDFilenamePrefix(sessionID)
+	// An acceptor with DynamicSessions takes the SessionID from the peer, so
+	// it must not be able to name a file outside logPath.
+	if strings.ContainsAny(prefix, `/\`) || !filepath.IsLocal(prefix) {
+		return nil, fmt.Errorf("session ID cannot be used in a file name: %q", prefix)
+	}
 	return newFileLog(prefix, logPath)
 }

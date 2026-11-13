@@ -16,6 +16,11 @@
 package gofix
 
 // Log is a generic interface for logging FIX messages and events.
+//
+// A session log that holds resources, such as open files or a database
+// connection, should also implement io.Closer. The engine closes a session's
+// log when Reload removes or restarts the session, or discards a session it
+// built for a Reload that failed.
 type Log interface {
 	// OnIncoming log incoming fix message.
 	OnIncoming([]byte)
@@ -35,6 +40,11 @@ type LogFactory interface {
 	// Create global log.
 	Create() (Log, error)
 
-	// CreateSessionLog session specific log.
-	CreateSessionLog(sessionID SessionID) (Log, error)
+	// CreateSessionLog creates the log for the session sessionID. settings
+	// is the session's effective settings: the global settings with the
+	// session's own on top, or the global settings alone for a session an
+	// acceptor creates for DynamicSessions. A factory should read anything
+	// it needs for the session, such as where to write the log, from
+	// settings, so that it can create logs for sessions added by Reload.
+	CreateSessionLog(sessionID SessionID, settings *SessionSettings) (Log, error)
 }

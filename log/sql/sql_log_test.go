@@ -18,6 +18,7 @@ package sql
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -103,7 +104,7 @@ func (suite *SQLLogTestSuite) TestSQLLogNoSession() {
 
 func (suite *SQLLogTestSuite) TestSQLLog() {
 	// create log
-	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID)
+	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
 	require.Nil(suite.T(), err)
 	suite.log = log.(*sqlLog)
 
@@ -124,13 +125,25 @@ func (suite *SQLLogTestSuite) TestSQLLog() {
 	require.Equal(suite.T(), "Cool4", entries[1])
 }
 
+func (suite *SQLLogTestSuite) TestSQLLogClose() {
+	log, err := NewLogFactory(suite.settings).CreateSessionLog(suite.sessionID, suite.settings.SessionSettings()[suite.sessionID])
+	require.NoError(suite.T(), err)
+	suite.log = log.(*sqlLog)
+
+	db := suite.log.db
+	closer, ok := log.(io.Closer)
+	require.True(suite.T(), ok, "SQL log should implement io.Closer")
+	require.NoError(suite.T(), closer.Close())
+	require.Error(suite.T(), db.Ping(), "the database should be closed")
+}
+
 func (suite *SQLLogTestSuite) TestSqlPlaceholderReplacement() {
 	got := sqlString("A ? B ? C ?", postgresPlaceholder)
 	suite.Equal("A $1 B $2 C $3", got)
 }
 
 func (suite *SQLLogTestSuite) TearDownTest() {
-	suite.log.close()
+	suite.log.Close()
 	os.RemoveAll(suite.sqlLogRootPath)
 }
 

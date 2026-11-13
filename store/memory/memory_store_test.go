@@ -31,7 +31,7 @@ type MemoryStoreTestSuite struct {
 
 func (suite *MemoryStoreTestSuite) SetupTest() {
 	var err error
-	suite.MsgStore, err = gofix.NewMemoryStoreFactory().Create(gofix.SessionID{})
+	suite.MsgStore, err = gofix.NewMemoryStoreFactory().Create(gofix.SessionID{}, nil)
 	require.Nil(suite.T(), err)
 }
 

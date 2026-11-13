@@ -163,8 +163,8 @@ func (l *textLog) String() string {
 
 type textLogFactory struct{ log *textLog }
 
-func (f textLogFactory) Create() (Log, error)                    { return f.log, nil }
-func (f textLogFactory) CreateSessionLog(SessionID) (Log, error) { return f.log, nil }
+func (f textLogFactory) Create() (Log, error)                                      { return f.log, nil }
+func (f textLogFactory) CreateSessionLog(SessionID, *SessionSettings) (Log, error) { return f.log, nil }
 
 func TestRedactingLog(t *testing.T) {
 	raw := wireMessage("8=FIX.4.4", "35=A", "554="+testSecret)

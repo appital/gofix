@@ -32,9 +32,7 @@ const (
 	defaultSessionsTable = "sessions"
 )
 
-type sqlStoreFactory struct {
-	settings *gofix.Settings
-}
+type sqlStoreFactory struct{}
 
 type sqlStore struct {
 	sessionID          gofix.SessionID
@@ -80,23 +78,13 @@ func postgresPlaceholder(i int) string {
 }
 
 // NewStoreFactory returns a sql-based implementation of MessageStoreFactory.
-func NewStoreFactory(settings *gofix.Settings) gofix.MessageStoreFactory {
-	return sqlStoreFactory{settings: settings}
+// Each session's store is configured by its settings.
+func NewStoreFactory() gofix.MessageStoreFactory {
+	return sqlStoreFactory{}
 }
 
 // Create creates a new SQLStore implementation of the MessageStore interface.
-func (f sqlStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.MessageStore, err error) {
-	globalSettings := f.settings.GlobalSettings()
-	dynamicSessions, _ := globalSettings.BoolSetting(config.DynamicSessions)
-
-	sessionSettings, ok := f.settings.SessionSettings()[sessionID]
-	if !ok {
-		if dynamicSessions {
-			sessionSettings = globalSettings
-		} else {
-			return nil, fmt.Errorf("unknown session: %v", sessionID)
-		}
-	}
+func (f sqlStoreFactory) Create(sessionID gofix.SessionID, sessionSettings *gofix.SessionSettings) (msgStore gofix.MessageStore, err error) {
 
 	sqlDriver, err := sessionSettings.Setting(config.SQLStoreDriver)
 	if err != nil {
@@ -130,7 +118,7 @@ func (f sqlStoreFactory) Create(sessionID gofix.SessionID) (msgStore gofix.Messa
 
 func newSQLStore(sessionID gofix.SessionID, driver, dataSourceName, messagesTableName, sessionsTableName string, connMaxLifetime time.Duration) (store *sqlStore, err error) {
 
-	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID)
+	memStore, memErr := gofix.NewMemoryStoreFactory().Create(sessionID, nil)
 	if memErr != nil {
 		err = errors.Wrap(memErr, "cache creation")
 		return

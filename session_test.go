@@ -347,7 +347,7 @@ func (s *SessionSuite) TestCheckSessionTimeInRange() {
 		s.session.State = test.before
 
 		now := time.Now().UTC()
-		memStore, memErr := NewMemoryStoreFactory().Create(s.sessionID)
+		memStore, memErr := NewMemoryStoreFactory().Create(s.sessionID, nil)
 		s.Require().Nil(memErr)
 
 		if test.before.IsSessionTime() {

@@ -27,7 +27,7 @@ type nullLogFactory struct{}
 func (nullLogFactory) Create() (Log, error) {
 	return nullLog{}, nil
 }
-func (nullLogFactory) CreateSessionLog(_ SessionID) (Log, error) {
+func (nullLogFactory) CreateSessionLog(SessionID, *SessionSettings) (Log, error) {
 	return nullLog{}, nil
 }
 

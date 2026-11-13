@@ -53,6 +53,6 @@ type countingLogFactory struct{ c *byteCounter }
 
 func (f countingLogFactory) Create() (gofix.Log, error) { return countingLog{f.c}, nil }
 
-func (f countingLogFactory) CreateSessionLog(gofix.SessionID) (gofix.Log, error) {
+func (f countingLogFactory) CreateSessionLog(gofix.SessionID, *gofix.SessionSettings) (gofix.Log, error) {
 	return countingLog{f.c}, nil
 }
