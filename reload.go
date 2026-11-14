@@ -4,36 +4,15 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"maps"
+	"runtime/debug"
 	"slices"
+	"sync"
 
 	"github.com/appital/gofix/config"
-)
-
-var (
-	// errReloadBeforeRun is returned by Reload before Run has started the
-	// engine, which loads the settings itself.
-	errReloadBeforeRun = errors.New("cannot reload before Run has started")
-	// errReloadAfterRun is returned by Reload once Run has begun to shut
-	// down.
-	errReloadAfterRun = errors.New("cannot reload after Run has stopped")
-)
-
-// runState is where an Acceptor or Initiator is in its life, as far as
-// Reload is concerned.
-type runState int
-
-const (
-	// runNotStarted is the state before Run has started the engine, or
-	// after it failed to.
-	runNotStarted runState = iota
-	runStarted
-	// runFinished is the state once Run has begun to shut down.
-	runFinished
 )
 
 // acceptorEngineSettings are the global settings an Acceptor reads once,
@@ -122,6 +101,11 @@ func diffSessions(current, next map[SessionID]*SessionSettings) sessionChanges {
 	return changes
 }
 
+// empty reports whether c changes nothing.
+func (c sessionChanges) empty() bool {
+	return len(c.added) == 0 && len(c.changed) == 0 && len(c.removed) == 0
+}
+
 // starting yields the sessions Reload builds and starts: those it adds, then
 // those it restarts.
 func (c sessionChanges) starting() iter.Seq2[SessionID, *SessionSettings] {
@@ -192,6 +176,38 @@ func closeLog(log Log) error {
 		return closer.Close()
 	}
 	return nil
+}
+
+// closeSessions closes the store and log of each of sessions, which have
+// stopped, and returns why any failed to close.
+func closeSessions(sessions map[SessionID]*session) []error {
+	var errs []error
+	for sessionID, s := range sessions {
+		if err := s.store.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing store of session %v: %w", sessionID, err))
+		}
+		if err := closeLog(s.log); err != nil {
+			errs = append(errs, fmt.Errorf("closing log of session %v: %w", sessionID, err))
+		}
+	}
+	return errs
+}
+
+// announceStarted tells the application of s, a session Run or Reload has
+// just started, that s has been created, then marks created done. It is
+// called on the goroutine that goes on to run s, rather than by Run or Reload,
+// so that OnCreate is not called holding lifecycle.reloadMu and may itself
+// call Reload. OnCreate still returns before any other callback for s is
+// called, since s does not run until it has. A panic in OnCreate is logged,
+// and s runs anyway.
+func announceStarted(s *session, created *sync.WaitGroup) {
+	defer created.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.OnEventf("OnCreate panicked: %v\n%s", r, debug.Stack())
+		}
+	}()
+	announceSession(s)
 }
 
 // buildSessions builds, without registering or starting them, the sessions

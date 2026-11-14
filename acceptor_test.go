@@ -17,6 +17,7 @@ package gofix
 
 import (
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -175,6 +176,57 @@ func TestAcceptor_SetCallback(t *testing.T) {
 	assert.NotNil(t, conn)
 	assert.True(t, didUseCallback)
 	defer conn.Close()
+}
+
+// TestAcceptor_RunRetryReloadsTLSConfig checks that a Run retried after a
+// failed start builds its TLS configuration again from the settings it loads,
+// rather than reusing the configuration the failed Run built.
+func TestAcceptor_RunRetryReloadsTLSConfig(t *testing.T) {
+	const port = 5011
+
+	settingsWithTLSVersion := func(minVersion string) *Settings {
+		settings := NewSettings()
+		settings.GlobalSettings().Set(config.SocketAcceptPort, strconv.Itoa(port))
+		settings.GlobalSettings().Set(config.HeartBtInt, "30")
+		settings.GlobalSettings().Set(config.SocketUseSSL, "Y")
+		settings.GlobalSettings().Set(config.SocketMinimumTLSVersion, minVersion)
+
+		sessionSettings := NewSessionSettings()
+		sessionSettings.Set(config.BeginString, BeginStringFIX42)
+		sessionSettings.Set(config.SenderCompID, "sender")
+		sessionSettings.Set(config.TargetCompID, "target")
+		_, err := settings.AddSession(sessionSettings)
+		require.NoError(t, err)
+		return settings
+	}
+
+	source := newTestSource(settingsWithTLSVersion("TLS12"))
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+
+	var seen []*tls.Config
+	acceptor.SetNewListenerCallback(func(address string, tlsConfig *tls.Config) (net.Listener, error) {
+		seen = append(seen, tlsConfig)
+		if len(seen) == 1 {
+			return nil, errors.New("listen failed")
+		}
+		return net.Listen("tcp", address)
+	})
+
+	_, err = startForTest(t, acceptor)
+	require.Error(t, err)
+	require.Len(t, seen, 1)
+	require.NotNil(t, seen[0])
+	assert.Equal(t, uint16(tls.VersionTLS12), seen[0].MinVersion)
+
+	// The failed Run's TLS config must not be kept: the retry loads the
+	// settings again and builds the TLS config from them.
+	source.set(settingsWithTLSVersion("TLS13"))
+	_, err = startForTest(t, acceptor)
+	require.NoError(t, err)
+	require.Len(t, seen, 2)
+	require.NotNil(t, seen[1])
+	assert.Equal(t, uint16(tls.VersionTLS13), seen[1].MinVersion)
 }
 
 func TestAcceptor_TCPProxy(t *testing.T) {

@@ -50,8 +50,6 @@ type Acceptor struct {
 	connectionGroup       sync.WaitGroup
 	stopCtx               context.Context
 	lifecycle             lifecycle
-	readyOnce             sync.Once
-	ready                 chan struct{}
 	dynamicSessions       bool
 	dynamicQualifier      bool
 	dynamicQualifierCount atomic.Int64
@@ -67,15 +65,11 @@ type Acceptor struct {
 	firstMessageTimeout   time.Duration
 	socketAcceptHost      string
 	useTCPProxy           bool
-	// reloadMu serialises Reload, and keeps it from running while Run starts
-	// or stops the acceptor. runState is guarded by it.
-	reloadMu sync.Mutex
-	runState runState
 	// mu guards settings, sessions and sessionHostPort, which Reload changes
 	// while connections are being handled.
 	mu sync.RWMutex
 	// sessionSettings holds the effective settings of the static sessions.
-	// It is guarded by reloadMu.
+	// Once Run has started the acceptor it is guarded by lifecycle.reloadMu.
 	sessionSettings map[SessionID]*SessionSettings
 	sessionFactory
 }
@@ -92,40 +86,26 @@ type NewListenerCallback func(address string, tlsConfig *tls.Config) (net.Listen
 
 // Run loads the acceptor's settings from its SettingsSource, creates and
 // registers the sessions in them, and accepts connections until ctx is done.
-// It then stops accepting, logs out its sessions, closes their connections and
-// returns. It returns nil once it has shut down because ctx is done, or the
-// error that stopped it starting, such as the SettingsSource failing or a bad
-// setting, in which case nothing is left running or registered and Run may be
-// called again, which loads the settings again.
+// It then stops accepting, logs out its sessions, closes their connections,
+// closes the stores and logs it created, and returns. It returns nil once it
+// has shut down because ctx is done, or the error that stopped it starting,
+// such as the SettingsSource failing or a bad setting, in which case nothing
+// is left running or registered and Run may be called again, which loads the
+// settings again.
 //
-// Run returns ctx's error, starting nothing, if ctx is already done, and an
+// Run returns ctx's error, starting nothing, if ctx is done before Run has
+// started the acceptor, for example while the SettingsSource is loading,
+// whatever error that causes; Run may then be called again. It returns an
 // error if it is already running or has run. Ready is closed once the acceptor
 // is listening.
 func (a *Acceptor) Run(ctx context.Context) error {
-	if err := a.lifecycle.begin(ctx); err != nil {
-		return err
-	}
-	a.reloadMu.Lock()
-	if err := a.start(ctx); err != nil {
-		a.reloadMu.Unlock()
-		a.lifecycle.abort()
-		return err
-	}
-	a.runState = runStarted
-	a.reloadMu.Unlock()
-	close(a.readyChan())
-
-	<-ctx.Done()
-	a.reloadMu.Lock()
-	a.runState = runFinished
-	a.reloadMu.Unlock()
-	return a.shutdown()
+	return a.lifecycle.run(ctx, a.start, a.shutdown)
 }
 
 // Ready returns a channel that is closed once Run has loaded the settings,
-// registered the sessions in them and is listening on every port. It is never
-// closed if Run fails to start, so wait on it together with Run's result or
-// its context:
+// registered the sessions in them, is listening on every port, and OnCreate
+// has returned for each session. It is never closed if Run fails to start, so
+// wait on it together with Run's result or its context:
 //
 //	g, ctx := errgroup.WithContext(ctx)
 //	g.Go(func() error { return acceptor.Run(ctx) })
@@ -135,18 +115,14 @@ func (a *Acceptor) Run(ctx context.Context) error {
 //		return g.Wait()
 //	}
 func (a *Acceptor) Ready() <-chan struct{} {
-	return a.readyChan()
-}
-
-func (a *Acceptor) readyChan() chan struct{} {
-	a.readyOnce.Do(func() { a.ready = make(chan struct{}) })
-	return a.ready
+	return a.lifecycle.readyChan()
 }
 
 // start loads the settings, creates the global log, and opens the listeners
 // for and starts the sessions in the settings. If it fails, nothing is left
-// open, registered or running.
-func (a *Acceptor) start(ctx context.Context) error {
+// open, registered or running. created is done once OnCreate has returned for
+// each session it starts.
+func (a *Acceptor) start(ctx context.Context, created *sync.WaitGroup) error {
 	settings, err := a.source.load(ctx)
 	if err != nil {
 		return err
@@ -176,7 +152,7 @@ func (a *Acceptor) start(ctx context.Context) error {
 	}
 	// No session is running yet, so apply either fails having changed
 	// nothing or starts every session.
-	if err := a.apply(ctx, settings); err != nil {
+	if err := a.apply(ctx, settings, created); err != nil {
 		_ = closeLog(globalLog)
 		return err
 	}
@@ -305,6 +281,12 @@ func (a *Acceptor) shutdown() error {
 			errs = append(errs, fmt.Errorf("unregistering session %v: %w", sessionID, err))
 		}
 	}
+	// Run created the stores and logs, so it closes them, the global log last
+	// since nothing else uses it now.
+	errs = append(errs, closeSessions(a.sessions)...)
+	if err := closeLog(a.globalLog); err != nil {
+		errs = append(errs, fmt.Errorf("closing global log: %w", err))
+	}
 	return errors.Join(errs...)
 }
 
@@ -363,21 +345,24 @@ func (a *Acceptor) Registry() *Registry {
 // settings itself, and once Run has begun to shut down. A failed Reload does
 // not stop Run.
 //
+// Each session Reload starts calls Application.OnCreate before it runs, and
+// Reload returns once each has. Reload does not keep other Reloads waiting
+// while OnCreate runs, so OnCreate may call Reload, as may the other
+// callbacks. A callback must not use Reload to stop the session it was called
+// for, though, since Reload then waits for the callback to return.
+//
 // Sessions created by DynamicSessions are not in the settings, and are left
 // alone. Sessions created after Reload take its global settings. They can log
 // on through any of the acceptor's ports, so with DynamicSessions Reload never
 // closes a listener.
 func (a *Acceptor) Reload(ctx context.Context) error {
-	a.reloadMu.Lock()
-	defer a.reloadMu.Unlock()
+	return a.lifecycle.reload(ctx, a.reload)
+}
 
-	switch a.runState {
-	case runNotStarted:
-		return errReloadBeforeRun
-	case runFinished:
-		return errReloadAfterRun
-	}
-
+// reload loads the settings and applies them, as Reload describes, holding
+// lifecycle.reloadMu. created is done once OnCreate has returned for each
+// session it starts.
+func (a *Acceptor) reload(ctx context.Context, created *sync.WaitGroup) error {
 	settings, err := a.source.load(ctx)
 	if err != nil {
 		return err
@@ -385,13 +370,15 @@ func (a *Acceptor) Reload(ctx context.Context) error {
 	if err := checkUnchanged(a.settings.GlobalSettings(), settings.GlobalSettings(), acceptorEngineSettings); err != nil {
 		return err
 	}
-	return a.apply(ctx, settings)
+	return a.apply(ctx, settings, created)
 }
 
 // apply brings the acceptor's sessions and listeners in line with settings,
 // as Reload describes. Run calls it with no sessions running to start the
-// acceptor. The caller holds reloadMu.
-func (a *Acceptor) apply(ctx context.Context, settings *Settings) error {
+// acceptor, before any Reload can run, and Reload calls it holding
+// lifecycle.reloadMu.
+// created is done once OnCreate has returned for each session apply starts.
+func (a *Acceptor) apply(ctx context.Context, settings *Settings, created *sync.WaitGroup) error {
 	nextSettings := settings.SessionSettings()
 	changes := diffSessions(a.sessionSettings, nextSettings)
 	if err := checkStoreSettings(a.sessionSettings, changes); err != nil {
@@ -478,10 +465,6 @@ func (a *Acceptor) apply(ctx context.Context, settings *Settings) error {
 	for _, sessionID := range failed {
 		delete(hostPort, sessionID)
 	}
-	for _, s := range built {
-		announceSession(s)
-	}
-
 	a.mu.Lock()
 	for _, sessionID := range changes.removed {
 		delete(a.sessions, acceptorKey(sessionID))
@@ -498,8 +481,12 @@ func (a *Acceptor) apply(ctx context.Context, settings *Settings) error {
 	a.sessionSettings = nextSettings
 	a.mu.Unlock()
 
+	created.Add(len(built))
 	for _, s := range built {
-		a.sessionGroup.Go(s.run)
+		a.sessionGroup.Go(func() {
+			announceStarted(s, created)
+			s.run()
+		})
 	}
 	for address, listener := range opened {
 		a.listeners[address] = listener
@@ -535,8 +522,12 @@ func (a *Acceptor) apply(ctx context.Context, settings *Settings) error {
 		}
 	}
 
-	a.globalLog.OnEventf("Applied settings: %d sessions added, %d removed, %d restarted",
-		len(changes.added), len(changes.removed), len(changes.changed))
+	// A Reload that changes nothing, as most do with StaticSettings, is not
+	// logged.
+	if !changes.empty() {
+		a.globalLog.OnEventf("Applied settings: %d sessions added, %d removed, %d restarted",
+			len(changes.added), len(changes.removed), len(changes.changed))
+	}
 	return errors.Join(errs...)
 }
 
@@ -569,9 +560,6 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings Set
 		sessionHostPort: make(map[SessionID]int),
 		listeners:       make(map[string]net.Listener),
 		sessionFactory:  sessionFactory{registry: o.registry, metricsFactory: o.metricsFactory},
-
-		maxMessageSize:      defaultMaxMessageSize,
-		firstMessageTimeout: defaultFirstMessageTimeout,
 	}, nil
 }
 

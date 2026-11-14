@@ -13,12 +13,15 @@ import (
 // given, so a SettingsSource may block and may fail. It is never called from
 // NewAcceptor or NewInitiator.
 //
-// The engine keeps the Settings a SettingsSource returns, so they must not be
-// changed afterwards. Return new Settings from each call instead.
+// The engine copies the Settings a SettingsSource returns, so a SettingsSource
+// may return the same Settings each time and change them between calls, but
+// not while the engine is calling it.
 type SettingsSource func(ctx context.Context) (*Settings, error)
 
 // StaticSettings returns a SettingsSource that always returns settings, for
-// an engine whose settings do not change. Reload does nothing with it.
+// settings that are already loaded. Reload applies the changes made to
+// settings since the engine last loaded them, so if they never change it
+// leaves the engine as it is.
 func StaticSettings(settings *Settings) SettingsSource {
 	return func(context.Context) (*Settings, error) {
 		return settings, nil
@@ -50,8 +53,10 @@ var (
 	errNilSettings       = errors.New("SettingsSource returned nil Settings")
 )
 
-// load calls the source, and returns an error if it fails or returns no
-// Settings.
+// load calls the source, and returns a copy of the Settings it returns, or an
+// error if it fails or returns no Settings. The engine compares the settings
+// each Reload loads with those it last loaded, so it must not share them with
+// the source, which may change them.
 func (s SettingsSource) load(ctx context.Context) (*Settings, error) {
 	settings, err := s(ctx)
 	if err != nil {
@@ -60,5 +65,5 @@ func (s SettingsSource) load(ctx context.Context) (*Settings, error) {
 	if settings == nil {
 		return nil, fmt.Errorf("loading settings: %w", errNilSettings)
 	}
-	return settings, nil
+	return settings.clone(), nil
 }

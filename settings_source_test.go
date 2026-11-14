@@ -8,10 +8,16 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/appital/gofix/config"
 )
 
 // sourceTestEngines builds an acceptor and an initiator whose sessions use
@@ -60,6 +66,41 @@ func TestStaticSettings(t *testing.T) {
 		loaded, err := source(context.Background())
 		require.NoError(t, err)
 		assert.Same(t, settings, loaded)
+	}
+}
+
+// TestStaticSettingsReloadAppliesChanges checks that the engine copies the
+// Settings a StaticSettings source returns, so that Reload compares the
+// settings changed in place with those Run loaded: it restarts a session whose
+// settings changed, and the acceptor refuses a change to a global setting it
+// reads once.
+func TestStaticSettingsReloadAppliesChanges(t *testing.T) {
+	for _, tc := range sourceTestEngines(5146) {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewRegistry()
+			settings := reloadSettings(t, tc.global, tc.session("A"))
+			e, err := tc.create(newReloadApp(), NewMemoryStoreFactory(), StaticSettings(settings), NewNullLogFactory(), registry)
+			require.NoError(t, err)
+			_, err = startForTest(t, e)
+			require.NoError(t, err)
+			before, _ := registry.lookup(tc.id("A"))
+			require.NotNil(t, before)
+
+			sessionSettings := settings.sessionSettings[tc.id("A")]
+			require.NotNil(t, sessionSettings)
+			sessionSettings.Set(config.LogonTimeout, "20")
+			require.NoError(t, e.Reload(context.Background()))
+			after, _ := registry.lookup(tc.id("A"))
+			require.NotNil(t, after)
+			assert.False(t, before == after, "A should have been restarted with its changed settings")
+
+			if tc.name == "acceptor" {
+				settings.GlobalSettings().Set(config.MaxMessageSize, "1024")
+				require.ErrorContains(t, e.Reload(context.Background()), config.MaxMessageSize)
+				again, _ := registry.lookup(tc.id("A"))
+				assert.True(t, after == again, "a refused Reload should change nothing")
+			}
+		})
 	}
 }
 
@@ -194,6 +235,45 @@ func TestRunFailsWhenSettingsSourceFails(t *testing.T) {
 	}
 }
 
+// TestRunCancelledWhileLoading checks that a Run whose context is done while
+// the SettingsSource is loading returns the context's error, whatever error
+// the SettingsSource returns, leaves nothing registered, and can be run again.
+func TestRunCancelledWhileLoading(t *testing.T) {
+	for _, tc := range sourceTestEngines(5149) {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewRegistry()
+			settings := reloadSettings(t, tc.global, tc.session("A"))
+			loading := make(chan struct{}, 1)
+			var loads int
+			source := func(ctx context.Context) (*Settings, error) {
+				loads++
+				if loads > 1 {
+					return settings, nil
+				}
+				loading <- struct{}{}
+				<-ctx.Done()
+				// A database driver need not return ctx's error.
+				return nil, errors.New("connection closed")
+			}
+			e, err := tc.create(newReloadApp(), NewMemoryStoreFactory(), source, NewNullLogFactory(), registry)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- e.Run(ctx) }()
+			<-loading
+			cancel()
+			assert.Equal(t, context.Canceled, <-done, "Run should return ctx's error, unwrapped")
+			assert.False(t, isClosed(e.Ready()))
+			_, ok := registry.lookup(tc.id("A"))
+			assert.False(t, ok)
+
+			_, err = startForTest(t, e)
+			require.NoError(t, err, "Run should succeed when run again")
+		})
+	}
+}
+
 // TestRunFailureRegistersNothing checks that a Run that cannot create every
 // session leaves none registered, closes the stores and logs it created, and
 // can be retried.
@@ -234,6 +314,193 @@ func TestRunFailureRegistersNothing(t *testing.T) {
 				_, ok := registry.lookup(tc.id(client))
 				assert.True(t, ok, "%s should be registered", client)
 			}
+		})
+	}
+}
+
+// TestRunClosesStoresAndLogs checks that Run, once it has shut down, has
+// closed every store and log it created, including those of sessions Reload
+// added or restarted, and each only once.
+func TestRunClosesStoresAndLogs(t *testing.T) {
+	for _, tc := range sourceTestEngines(5145) {
+		t.Run(tc.name, func(t *testing.T) {
+			stores, logs := &hookStoreFactory{}, &hookLogFactory{}
+			source := newTestSource(reloadSettings(t, tc.global, tc.session("A"), tc.session("B")))
+			e, err := tc.create(newReloadApp(), stores, source.load, logs, NewRegistry())
+			require.NoError(t, err)
+			run := runForTest(t, e)
+			select {
+			case <-e.Ready():
+			case <-run.done:
+				t.Fatalf("Run returned %v", run.err)
+			}
+
+			// B is restarted, keeping its store, and C added.
+			require.NoError(t, reloadWith(e, source, reloadSettings(t, tc.global,
+				tc.session("A"), tc.session("B", config.LogonTimeout, "20"), tc.session("C"))))
+			_, closed := logs.globalCounts()
+			assert.Zero(t, closed, "the global log should be open while Run is running")
+
+			require.NoError(t, run.stop())
+			for _, client := range []string{"A", "B", "C"} {
+				assert.Equal(t, 1, stores.closedStores(tc.id(client)), "%s's store should be closed once", client)
+				created, closed := logs.counts(tc.id(client))
+				assert.Equal(t, created, closed, "every log created for %s should be closed", client)
+			}
+			created, closed := logs.globalCounts()
+			assert.Equal(t, 1, created)
+			assert.Equal(t, 1, closed, "the global log should be closed")
+		})
+	}
+}
+
+// onCreateApp is a reloadApp that calls onCreate from OnCreate.
+type onCreateApp struct {
+	*reloadApp
+	onCreate func(SessionID)
+}
+
+func (a onCreateApp) OnCreate(sessionID SessionID) { a.onCreate(sessionID) }
+
+// TestReloadWhileRunStarts checks that a Reload called while Run is starting
+// the engine returns errReloadBeforeRun at once, rather than waiting for Run's
+// SettingsSource, and that an Application may call Reload from OnCreate while
+// Run starts the engine.
+func TestReloadWhileRunStarts(t *testing.T) {
+	for _, tc := range sourceTestEngines(5147) {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := reloadSettings(t, tc.global, tc.session("A"))
+			loading, release := make(chan struct{}), make(chan struct{})
+			var loads int
+			source := func(ctx context.Context) (*Settings, error) {
+				loads++
+				if loads == 1 {
+					close(loading)
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+				return settings, nil
+			}
+
+			var e engine
+			onCreate := make(chan error, 1)
+			app := onCreateApp{reloadApp: newReloadApp(), onCreate: func(SessionID) {
+				onCreate <- e.Reload(context.Background())
+			}}
+			e, err := tc.create(app, NewMemoryStoreFactory(), source, NewNullLogFactory(), NewRegistry())
+			require.NoError(t, err)
+			run := runForTest(t, e)
+			<-loading
+
+			reloaded := make(chan error, 1)
+			go func() { reloaded <- e.Reload(context.Background()) }()
+			select {
+			case err := <-reloaded:
+				require.ErrorIs(t, err, errReloadBeforeRun)
+			case <-time.After(2 * time.Second):
+				close(release)
+				t.Fatal("Reload waited for Run's SettingsSource")
+			}
+
+			close(release)
+			select {
+			case <-e.Ready():
+			case <-run.done:
+				t.Fatalf("Run returned %v", run.err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("Run did not start")
+			}
+			require.ErrorIs(t, <-onCreate, errReloadBeforeRun, "Reload from OnCreate during Run")
+			assert.Equal(t, 1, loads, "neither Reload should have loaded the settings")
+		})
+	}
+}
+
+// TestReloadFromOnCreate checks that OnCreate is called for each session
+// before Ready is closed or the Reload that started the session returns, that
+// OnCreate may call Reload while a Reload is calling it, and that a panic in
+// OnCreate leaves the session running.
+func TestReloadFromOnCreate(t *testing.T) {
+	for _, tc := range sourceTestEngines(5148) {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewRegistry()
+			source := newTestSource(reloadSettings(t, tc.global, tc.session("A")))
+			var e engine
+			var mu sync.Mutex
+			var createdIDs []SessionID
+			nested := make(chan error, 1)
+			app := onCreateApp{reloadApp: newReloadApp(), onCreate: func(sessionID SessionID) {
+				mu.Lock()
+				createdIDs = append(createdIDs, sessionID)
+				mu.Unlock()
+				switch sessionID {
+				case tc.id("B"):
+					source.set(reloadSettings(t, tc.global, tc.session("A"), tc.session("B"), tc.session("C")))
+					nested <- e.Reload(context.Background())
+				case tc.id("P"):
+					panic("OnCreate failed")
+				}
+			}}
+			created := func() []SessionID {
+				mu.Lock()
+				defer mu.Unlock()
+				return slices.Clone(createdIDs)
+			}
+			e, err := tc.create(app, NewMemoryStoreFactory(), source.load, NewNullLogFactory(), registry)
+			require.NoError(t, err)
+			_, err = startForTest(t, e)
+			require.NoError(t, err)
+			assert.Equal(t, []SessionID{tc.id("A")}, created(), "OnCreate should be called before Ready")
+
+			reloaded := make(chan error, 1)
+			go func() {
+				reloaded <- reloadWith(e, source, reloadSettings(t, tc.global, tc.session("A"), tc.session("B")))
+			}()
+			select {
+			case err := <-reloaded:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("Reload deadlocked when OnCreate called Reload")
+			}
+			require.NoError(t, <-nested, "Reload from OnCreate")
+			assert.Equal(t, []SessionID{tc.id("A"), tc.id("B"), tc.id("C")}, created(),
+				"OnCreate should be called for B, and then for C by the Reload B's OnCreate made, before Reload returns")
+			_, ok := registry.lookup(tc.id("C"))
+			assert.True(t, ok, "C should have been added by the Reload from OnCreate")
+
+			require.NoError(t, reloadWith(e, source, reloadSettings(t, tc.global,
+				tc.session("A"), tc.session("B"), tc.session("C"), tc.session("P"))))
+			assert.Contains(t, created(), tc.id("P"))
+			_, ok = registry.lookup(tc.id("P"))
+			assert.True(t, ok, "P should still be registered after its OnCreate panicked")
+		})
+	}
+}
+
+// TestReloadLogsOnlyChanges checks that the global log records the settings
+// Run starts with and each Reload that changes something, but not a Reload
+// that changes nothing.
+func TestReloadLogsOnlyChanges(t *testing.T) {
+	for _, tc := range sourceTestEngines(5150) {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &textLog{}
+			settings := reloadSettings(t, tc.global, tc.session("A"))
+			e, err := tc.create(newReloadApp(), NewMemoryStoreFactory(), StaticSettings(settings), textLogFactory{log}, NewRegistry())
+			require.NoError(t, err)
+			_, err = startForTest(t, e)
+			require.NoError(t, err)
+			applied := func() int { return strings.Count(log.String(), "Applied settings") }
+			assert.Equal(t, 1, applied(), "Run should log the settings it starts with")
+
+			require.NoError(t, e.Reload(context.Background()))
+			assert.Equal(t, 1, applied(), "a Reload that changes nothing should not be logged")
+
+			settings.sessionSettings[tc.id("A")].Set(config.LogonTimeout, "20")
+			require.NoError(t, e.Reload(context.Background()))
+			assert.Equal(t, 2, applied(), "a Reload that restarts a session should be logged")
 		})
 	}
 }

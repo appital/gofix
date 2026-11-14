@@ -263,6 +263,9 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
+	acceptor.mu.RLock()
+	kept := acceptor.settings
+	acceptor.mu.RUnlock()
 
 	initiator, err := NewInitiator(initiatorApp, NewMemoryStoreFactory(),
 		StaticSettings(reloadSettings(t, reloadInitiatorGlobal, initiatorSession("A", portA))),
@@ -313,7 +316,7 @@ func TestAcceptorReloadFailureChangesNothing(t *testing.T) {
 	assert.Equal(t, 1, logons)
 	assert.Equal(t, 0, logouts)
 	acceptor.mu.RLock()
-	assert.Same(t, current, acceptor.settings)
+	assert.Same(t, kept, acceptor.settings)
 	acceptor.mu.RUnlock()
 
 	// The acceptor still reloads once the settings are good.
@@ -430,14 +433,26 @@ func (s hookStore) Close() error {
 	return s.MessageStore.Close()
 }
 
-// hookLogFactory creates session logs that do nothing, and counts how many of
-// each session's logs have been created and closed.
+// hookLogFactory creates logs that do nothing, and counts how many global logs
+// and how many of each session's logs have been created and closed.
 type hookLogFactory struct {
-	mu              sync.Mutex
-	created, closed map[SessionID]int
+	mu                          sync.Mutex
+	created, closed             map[SessionID]int
+	globalCreated, globalClosed int
 }
 
-func (f *hookLogFactory) Create(*SessionSettings) (Log, error) { return nullLog{}, nil }
+func (f *hookLogFactory) Create(*SessionSettings) (Log, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.globalCreated++
+	return hookLog{factory: f, global: true}, nil
+}
+
+func (f *hookLogFactory) globalCounts() (created, closed int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.globalCreated, f.globalClosed
+}
 
 func (f *hookLogFactory) CreateSessionLog(sessionID SessionID, _ *SessionSettings) (Log, error) {
 	f.mu.Lock()
@@ -459,11 +474,16 @@ type hookLog struct {
 	nullLog
 	factory   *hookLogFactory
 	sessionID SessionID
+	global    bool
 }
 
 func (l hookLog) Close() error {
 	l.factory.mu.Lock()
 	defer l.factory.mu.Unlock()
+	if l.global {
+		l.factory.globalClosed++
+		return nil
+	}
 	if l.factory.closed == nil {
 		l.factory.closed = make(map[SessionID]int)
 	}
@@ -632,8 +652,8 @@ func TestInitiatorReloadFailsToRegister(t *testing.T) {
 	_, err = startForTest(t, initiator)
 	require.NoError(t, err)
 	sessionA := func() *session {
-		initiator.reloadMu.Lock()
-		defer initiator.reloadMu.Unlock()
+		initiator.lifecycle.reloadMu.Lock()
+		defer initiator.lifecycle.reloadMu.Unlock()
 		return initiator.sessions[clientSessionID("A")]
 	}
 	before := sessionA()

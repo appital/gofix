@@ -43,7 +43,9 @@ registers and starts every session in the settings, as `Reload` does for a
 session it adds. If the source returns an error, or any session cannot be
 created, `Run` returns the error, leaving nothing registered or running, and
 can be called again, which loads the settings again. `Run` does not retry by
-itself.
+itself. If its context is done before it has started, for example while the
+source is loading, `Run` returns the context's error, whatever error the
+source returns.
 
 No session exists, and none is in the `Registry`, until `Run` has created
 them, so a bad setting is reported by `Run` and not by the constructor.
@@ -117,8 +119,14 @@ The context passed to `Reload` is passed to the source, and limits how long `Rel
   `Ready()` first.
 - Called once `Run` has begun to shut down, `Reload` returns an error.
 - A failed `Reload` does not make `Run` return.
-- The engine keeps the `*Settings` the source returns. Do not change them
-  afterwards; return new `Settings` from each call. With `StaticSettings`,
-  `Reload` finds nothing changed and does nothing.
+- Each session `Reload` starts calls `OnCreate` before it runs, and `Reload`
+  returns once each has. Other calls to `Reload` are not kept waiting while
+  `OnCreate` runs, so `OnCreate`, like the other `Application` callbacks, may
+  call `Reload`. A callback must not use `Reload` to stop the session it was
+  called for, though, since `Reload` then waits for the callback to return.
+- The engine copies the `*Settings` the source returns, so the source may
+  return the same `Settings` each time and change them between calls, but not
+  while the engine is calling it. With `StaticSettings`, `Reload` applies the
+  changes made to the settings since they were last loaded.
 - The engine does not watch the source. Call `Reload` when the settings have
   changed.

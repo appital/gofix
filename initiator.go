@@ -36,17 +36,12 @@ type Initiator struct {
 	logFactory   LogFactory
 	globalLog    Log
 	lifecycle    lifecycle
-	readyOnce    sync.Once
-	ready        chan struct{}
 	wg           sync.WaitGroup
 
-	// reloadMu serialises Reload, and keeps it from running while Run starts
-	// or stops the initiator. It guards the fields below.
-	reloadMu        sync.Mutex
-	runState        runState
+	// Once Run has started the initiator, lifecycle.reloadMu guards the fields
+	// below.
 	runCtx          context.Context
 	source          SettingsSource
-	settings        *Settings
 	sessionSettings map[SessionID]*SessionSettings
 	sessions        map[SessionID]*session
 	// sessionRuns holds how to stop each session once Run has started it.
@@ -71,36 +66,25 @@ type initiatorConfig struct {
 // Run loads the initiator's settings from its SettingsSource, creates and
 // registers the sessions in them, connects them, and reconnects them whenever
 // they disconnect, until ctx is done. It then logs out the sessions, closes
-// their connections and returns. It returns nil once it has shut down because
-// ctx is done, or the error that stopped it starting, such as the
-// SettingsSource failing or a bad setting, in which case no session was
-// registered or started and Run may be called again, which loads the settings
-// again.
+// their connections, closes the stores and logs it created, and returns. It
+// returns nil once it has shut down because ctx is done, or the error that
+// stopped it starting, such as the SettingsSource failing or a bad setting, in
+// which case no session was registered or started and Run may be called again,
+// which loads the settings again.
 //
-// Run returns ctx's error, starting nothing, if ctx is already done, and an
+// Run returns ctx's error, starting nothing, if ctx is done before Run has
+// started the initiator, for example while the SettingsSource is loading,
+// whatever error that causes; Run may then be called again. It returns an
 // error if it is already running or has run. Ready is closed once the
 // sessions have been registered and started.
 func (i *Initiator) Run(ctx context.Context) error {
-	if err := i.lifecycle.begin(ctx); err != nil {
-		return err
-	}
+	return i.lifecycle.run(ctx, i.start, i.shutdown)
+}
 
-	i.reloadMu.Lock()
-	if err := i.start(ctx); err != nil {
-		i.reloadMu.Unlock()
-		i.lifecycle.abort()
-		return err
-	}
-	i.runState = runStarted
-	i.reloadMu.Unlock()
-	close(i.readyChan())
-
-	<-ctx.Done()
-	i.reloadMu.Lock()
-	i.runState = runFinished
-	i.reloadMu.Unlock()
-
-	// Each session logs out and disconnects once ctx is done.
+// shutdown waits for the sessions to log out and disconnect, which they do
+// once the context passed to Run is done, then unregisters them and closes
+// what Run created.
+func (i *Initiator) shutdown() error {
 	i.wg.Wait()
 
 	var errs []error
@@ -109,25 +93,27 @@ func (i *Initiator) Run(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("unregistering session %v: %w", sessionID, err))
 		}
 	}
+	// Run created the stores and logs, so it closes them, the global log last.
+	errs = append(errs, closeSessions(i.sessions)...)
+	if err := closeLog(i.globalLog); err != nil {
+		errs = append(errs, fmt.Errorf("closing global log: %w", err))
+	}
 	return errors.Join(errs...)
 }
 
 // Ready returns a channel that is closed once Run has loaded the settings,
-// and registered and started the sessions in them. It does not wait for them
-// to connect. It is never closed if Run fails to start, so wait on it
-// together with Run's result or its context, as for Acceptor.Ready.
+// registered and started the sessions in them, and OnCreate has returned for
+// each. It does not wait for them to connect. It is never closed if Run fails
+// to start, so wait on it together with Run's result or its context, as for
+// Acceptor.Ready.
 func (i *Initiator) Ready() <-chan struct{} {
-	return i.readyChan()
-}
-
-func (i *Initiator) readyChan() chan struct{} {
-	i.readyOnce.Do(func() { i.ready = make(chan struct{}) })
-	return i.ready
+	return i.lifecycle.readyChan()
 }
 
 // start loads the settings, creates the global log, and starts the sessions
 // in the settings. If it fails, nothing is left registered or running.
-func (i *Initiator) start(ctx context.Context) error {
+// created is done once OnCreate has returned for each session it starts.
+func (i *Initiator) start(ctx context.Context, created *sync.WaitGroup) error {
 	settings, err := i.source.load(ctx)
 	if err != nil {
 		return err
@@ -141,7 +127,7 @@ func (i *Initiator) start(ctx context.Context) error {
 	i.runCtx = ctx
 	// No session is running yet, so apply either fails having changed
 	// nothing or starts every session.
-	if err := i.apply(ctx, settings); err != nil {
+	if err := i.apply(ctx, settings, created); err != nil {
 		_ = closeLog(globalLog)
 		return err
 	}
@@ -163,14 +149,16 @@ func loadInitiatorConfig(settings *SessionSettings) (cfg initiatorConfig, err er
 }
 
 // startSession starts connecting the session sessionID until Run's context is
-// done or Reload stops it.
-func (i *Initiator) startSession(sessionID SessionID, cfg initiatorConfig) {
+// done or Reload stops it, once it has called OnCreate and marked created
+// done.
+func (i *Initiator) startSession(sessionID SessionID, cfg initiatorConfig, created *sync.WaitGroup) {
 	ctx, cancel := context.WithCancel(i.runCtx)
 	run := initiatorSessionRun{cancel: cancel, done: make(chan struct{})}
 	session := i.sessions[sessionID]
 	i.wg.Go(func() {
 		defer close(run.done)
 		defer cancel()
+		announceStarted(session, created)
 		i.handleConnection(ctx, session, cfg.tlsConfig, cfg.dialer, cfg.handshakeTimeout)
 	})
 	i.sessionRuns[sessionID] = run
@@ -209,28 +197,32 @@ func (i *Initiator) startSession(sessionID SessionID, cfg initiatorConfig) {
 // the SettingsSource, before Run has started the initiator, since Run loads
 // the settings itself, and once Run has begun to shut down. A failed Reload
 // does not stop Run.
+//
+// Each session Reload starts calls Application.OnCreate before it runs, and
+// Reload returns once each has. Reload does not keep other Reloads waiting
+// while OnCreate runs, so OnCreate may call Reload, as may the other
+// callbacks. A callback must not use Reload to stop the session it was called
+// for, though, since Reload then waits for the callback to return.
 func (i *Initiator) Reload(ctx context.Context) error {
-	i.reloadMu.Lock()
-	defer i.reloadMu.Unlock()
+	return i.lifecycle.reload(ctx, i.reload)
+}
 
-	switch i.runState {
-	case runNotStarted:
-		return errReloadBeforeRun
-	case runFinished:
-		return errReloadAfterRun
-	}
-
+// reload loads the settings and applies them, as Reload describes, holding
+// lifecycle.reloadMu. created is done once OnCreate has returned for each
+// session it starts.
+func (i *Initiator) reload(ctx context.Context, created *sync.WaitGroup) error {
 	settings, err := i.source.load(ctx)
 	if err != nil {
 		return err
 	}
-	return i.apply(ctx, settings)
+	return i.apply(ctx, settings, created)
 }
 
 // apply brings the initiator's sessions in line with settings, as Reload
-// describes. Run calls it with no sessions running to start the initiator.
-// The caller holds reloadMu.
-func (i *Initiator) apply(ctx context.Context, settings *Settings) error {
+// describes. Run calls it with no sessions running to start the initiator,
+// before any Reload can run, and Reload calls it holding lifecycle.reloadMu.
+// created is done once OnCreate has returned for each session apply starts.
+func (i *Initiator) apply(ctx context.Context, settings *Settings, created *sync.WaitGroup) error {
 	nextSettings := settings.SessionSettings()
 	changes := diffSessions(i.sessionSettings, nextSettings)
 	if err := checkStoreSettings(i.sessionSettings, changes); err != nil {
@@ -296,17 +288,20 @@ func (i *Initiator) apply(ctx context.Context, settings *Settings) error {
 
 	_, registerErrs := registerChanged(i.reg(), changes, built, nextSettings)
 	errs = append(errs, registerErrs...)
+	created.Add(len(built))
 	for sessionID, s := range built {
-		announceSession(s)
 		i.sessions[sessionID] = s
-		i.startSession(sessionID, configs[sessionID])
+		i.startSession(sessionID, configs[sessionID], created)
 	}
 
-	i.settings = settings
 	i.sessionSettings = nextSettings
 
-	i.globalLog.OnEventf("Applied settings: %d sessions added, %d removed, %d restarted",
-		len(changes.added), len(changes.removed), len(changes.changed))
+	// A Reload that changes nothing, as most do with StaticSettings, is not
+	// logged.
+	if !changes.empty() {
+		i.globalLog.OnEventf("Applied settings: %d sessions added, %d removed, %d restarted",
+			len(changes.added), len(changes.removed), len(changes.changed))
+	}
 	return errors.Join(errs...)
 }
 
