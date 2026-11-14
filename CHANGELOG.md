@@ -1,4 +1,4 @@
-## Unreleased
+## 0.6.0 (November 14, 2026)
 
 ### BREAKING CHANGES
 * `NewAcceptor` and `NewInitiator` now take a `SettingsSource`, a `func(ctx context.Context) (*Settings, error)`, in place of a `*Settings`. The engine calls it from `Run`, to load the settings it starts with, and from `Reload`, and never from the constructor, so settings kept in a database can be loaded inside `Run(ctx)`. For settings that are already loaded, replace `gofix.NewAcceptor(app, storeFactory, settings, logFactory)` with `gofix.NewAcceptor(app, storeFactory, gofix.StaticSettings(settings), logFactory)`
