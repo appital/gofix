@@ -310,12 +310,11 @@ func (i *Initiator) Registry() *Registry {
 	return i.reg()
 }
 
-// NewInitiator creates a new Initiator, which loads its settings from
-// settings when it is Run; use StaticSettings for settings that are already
-// loaded. NewInitiator does not call settings, and creates no sessions: Run
-// creates and registers them. It returns an error if settings is nil, or if
-// app has an optional callback method that would never be called; see
-// Application.
+// NewInitiator creates a new Initiator, which loads its settings from settings
+// when Run is called; use StaticSettings for settings that are already loaded.
+// NewInitiator does not call settings, and creates no sessions: Run creates and
+// registers them. It returns an error if settings is nil, or if app has an
+// optional callback method that would never be called; see Application.
 func NewInitiator(app Application, storeFactory MessageStoreFactory, settings SettingsSource, logFactory LogFactory, opts ...Option) (*Initiator, error) {
 	if err := checkApplication(app); err != nil {
 		return nil, err

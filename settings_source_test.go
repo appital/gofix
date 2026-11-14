@@ -137,6 +137,12 @@ func TestFileSettings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []SessionID{clientSessionID("B")}, keys(second.SessionSettings()))
 	assert.Equal(t, []SessionID{clientSessionID("A")}, keys(first.SessionSettings()))
+
+	// A done ctx stops it reading the file.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = source(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 // TestFileSettingsReload checks that an engine reads its settings file in

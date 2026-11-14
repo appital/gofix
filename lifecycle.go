@@ -11,8 +11,9 @@ var (
 	// errAlreadyRun is returned by Run when it is already running or has run.
 	errAlreadyRun = errors.New("already run")
 	// errReloadBeforeRun is returned by Reload before Run has started the
-	// engine, which loads the settings itself.
-	errReloadBeforeRun = errors.New("cannot reload before Run has started")
+	// engine, which loads the settings itself, including after a Run that
+	// failed to start it.
+	errReloadBeforeRun = errors.New("cannot reload until Run has started the engine")
 	// errReloadAfterRun is returned by Reload once Run has begun to shut
 	// down.
 	errReloadAfterRun = errors.New("cannot reload after Run has stopped")

@@ -842,14 +842,18 @@ func TestInitiatorReload(t *testing.T) {
 func TestReloadIsSerialised(t *testing.T) {
 	const port = 5130
 	acceptorApp := newReloadApp()
-	// Each load returns different settings, with B in every other one.
+	// Each load returns different settings, with B in every other one. They
+	// are built here because the source runs on the Reload goroutines, where
+	// require cannot stop the test. The engine copies what the source returns,
+	// so returning the same Settings each time is safe.
+	withoutB := reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port))
+	withB := reloadSettings(t, reloadAcceptorGlobal, acceptorSession("A", port), acceptorSession("B", port))
 	var loads atomic.Int64
 	source := func(context.Context) (*Settings, error) {
-		sessions := []map[string]string{acceptorSession("A", port)}
 		if loads.Add(1)%2 == 0 {
-			sessions = append(sessions, acceptorSession("B", port))
+			return withB, nil
 		}
-		return reloadSettings(t, reloadAcceptorGlobal, sessions...), nil
+		return withoutB, nil
 	}
 	acceptor, err := NewAcceptor(acceptorApp, NewMemoryStoreFactory(), source, NewNullLogFactory(), WithRegistry(NewRegistry()))
 	require.NoError(t, err)

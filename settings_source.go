@@ -14,8 +14,13 @@ import (
 // NewAcceptor or NewInitiator.
 //
 // The engine copies the Settings a SettingsSource returns, so a SettingsSource
-// may return the same Settings each time and change them between calls, but
-// not while the engine is calling it.
+// may return the same Settings each time and change them between calls, but not
+// while the engine is calling it.
+//
+// A SettingsSource that may block should return once ctx is done. Reload holds
+// a lock while it calls the SettingsSource, and Run waits for a Reload in
+// progress before it shuts the engine down, so a SettingsSource that never
+// returns keeps other Reloads waiting and keeps Run from returning.
 type SettingsSource func(ctx context.Context) (*Settings, error)
 
 // StaticSettings returns a SettingsSource that always returns settings, for
@@ -29,11 +34,15 @@ func StaticSettings(settings *Settings) SettingsSource {
 }
 
 // FileSettings returns a SettingsSource that reads the settings file at path
-// with ParseSettings each time it is called. Run therefore reports a file
-// that is missing or cannot be parsed, and Reload applies the changes made to
-// the file since it was last read.
+// with ParseSettings each time it is called. Run therefore reports a file that
+// is missing or cannot be parsed, and Reload applies the changes made to the
+// file since it was last read. It returns ctx's error, without reading the
+// file, if ctx is already done.
 func FileSettings(path string) SettingsSource {
-	return func(context.Context) (*Settings, error) {
+	return func(ctx context.Context) (*Settings, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			return nil, err

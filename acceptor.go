@@ -538,7 +538,7 @@ func acceptorKey(sessionID SessionID) SessionID {
 }
 
 // NewAcceptor creates a new Acceptor, which loads its settings from settings
-// when it is Run; use StaticSettings for settings that are already loaded.
+// when Run is called; use StaticSettings for settings that are already loaded.
 // NewAcceptor does not call settings, and creates no sessions: Run creates and
 // registers them. It returns an error if settings is nil, or if app has an
 // optional callback method that would never be called; see Application.
@@ -836,18 +836,22 @@ func (a *Acceptor) SetConnectionValidator(validator ConnectionValidator) {
 	a.connectionValidator = validator
 }
 
-// SetTLSConfig allows the creator of the Acceptor to specify a fully customizable tls.Config of their choice,
-// which will be used by Run.
+// SetTLSConfig allows the creator of the Acceptor to specify a fully
+// customizable tls.Config of their choice, which will be used by Run. It must
+// be called before Run: the acceptor keeps the tls.Config it starts with until
+// it stops, so a tls.Config set once Run has been called is not used.
 //
-// Note: when the caller explicitly provides a tls.Config with this function,
-// it takes precendent over TLS settings specified in the acceptor's settings.GlobalSettings(),
-// meaning that the `settings.GlobalSettings()` object is not inspected or used for the creation of the tls.Config.
+// Note: when the caller explicitly provides a tls.Config with this function, it
+// takes precendent over TLS settings specified in the acceptor's
+// settings.GlobalSettings(), meaning that the `settings.GlobalSettings()`
+// object is not inspected or used for the creation of the tls.Config.
 func (a *Acceptor) SetTLSConfig(tlsConfig *tls.Config) {
 	a.customTLSConfig = tlsConfig
 }
 
-// SetNewListenerCallback allows the creator of the Acceptor to specify the callback used to create each net.Listener
-// which will be used by Run.
+// SetNewListenerCallback allows the creator of the Acceptor to specify the
+// callback used to create each net.Listener which will be used by Run. It must
+// be called before Run.
 func (a *Acceptor) SetNewListenerCallback(cb NewListenerCallback) {
 	a.newListenerCallback = cb
 }
