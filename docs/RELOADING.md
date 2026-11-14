@@ -1,29 +1,63 @@
-# Reloading settings
+# Loading and reloading settings
 
-An Acceptor or Initiator builds its sessions from the `*Settings` passed to
-`NewAcceptor` or `NewInitiator`. To change them while the engine is running,
-for example after an admin API has changed a session in a database, build new
-`Settings` and pass them to `Reload`:
+An Acceptor or Initiator loads its settings from the `SettingsSource` passed
+to `NewAcceptor` or `NewInitiator`:
 
 ```go
-g, ctx := errgroup.WithContext(ctx)
-g.Go(func() error { return acceptor.Run(ctx) })
+type SettingsSource func(ctx context.Context) (*Settings, error)
+```
 
-// From the admin API, after a session has been changed:
-settings, err := loadSettingsFromDB(ctx)
+The engine calls it from `Run`, to load the settings it starts with, and from
+each `Reload`, to load the settings to change to. It never calls it from the
+constructor. A source that reads a database can therefore be a method or a
+closure, and the first load happens inside `Run(ctx)` like the rest of the
+engine's life:
+
+```go
+acceptor, err := gofix.NewAcceptor(app, storeFactory, loadSettingsFromDB, logFactory)
 if err != nil {
 	return err
 }
+
+g, ctx := errgroup.WithContext(ctx)
+g.Go(func() error { return acceptor.Run(ctx) })
+
+// From the admin API, after a session has been changed in the database:
 reloadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 defer cancel()
-return acceptor.Reload(reloadCtx, settings)
+return acceptor.Reload(reloadCtx)
 ```
+
+For settings kept in a settings file, use `gofix.FileSettings(path)`. It reads
+the file with `ParseSettings` on every load, so `Run` reports a file that is
+missing or cannot be parsed, and `Reload`, called for example when the process
+receives SIGHUP, applies the changes made to the file since.
+
+For settings that are already loaded and do not change, such as those parsed
+from an `io.Reader` with `ParseSettings`, use `gofix.StaticSettings(settings)`.
+
+## What Run does
+
+`Run` calls the source with its context, creates the global log, then creates,
+registers and starts every session in the settings, as `Reload` does for a
+session it adds. If the source returns an error, or any session cannot be
+created, `Run` returns the error, leaving nothing registered or running, and
+can be called again, which loads the settings again. `Run` does not retry by
+itself. If its context is done before it has started, for example while the
+source is loading, `Run` returns the context's error, whatever error the
+source returns.
+
+No session exists, and none is in the `Registry`, until `Run` has created
+them, so a bad setting is reported by `Run` and not by the constructor.
+`Ready()`, on both `Acceptor` and `Initiator`, returns a channel that is
+closed once the sessions are registered and started, and an acceptor is
+listening.
 
 ## What Reload does
 
-`Reload` compares each session's effective settings, meaning the global
-settings with the session's own on top, with those of the session that is
-running:
+`Reload` calls the source with its context, then compares each session's
+effective settings, meaning the global settings with the session's own on top,
+with those of the session that is running:
 
 | Session                          | What happens                                                                                                                                        |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,15 +68,15 @@ running:
 
 A change to a global setting changes the effective settings of every session that does not override it, so all of those sessions are restarted.
 
-The engine passes each new session's effective settings to the `MessageStoreFactory`, and each new or restarted session's to the `LogFactory`, so the built-in file and SQL stores and logs, and custom factories that read the settings they are given, work for sessions that were not in the settings the engine was built with.
+The engine passes each new session's effective settings to the `MessageStoreFactory`, and each new or restarted session's to the `LogFactory`, so the built-in file and SQL stores and logs, and custom factories that read the settings they are given, work for sessions that were not in the settings the engine started with.
 
-The global log is created once, by `LogFactory.Create` with the global settings the engine was built with. `Reload` does not recreate it, so a change to a global log setting such as `FileLogPath` applies to the sessions that inherit it, but the global log stays where it is.
+The global log is created once, by `Run`, which passes `LogFactory.Create` the global settings it loaded. `Reload` does not recreate it, so a change to a global log setting such as `FileLogPath` applies to the sessions that inherit it, but the global log stays where it is.
 
 Sessions an acceptor creates for `DynamicSessions` are not in the settings, so `Reload` leaves them alone. They can log on through any port the acceptor listens on, so with `DynamicSessions` set, `Reload` opens listeners for new ports but never closes one; the acceptor keeps listening on them until `Run` returns. Dynamic sessions created after a `Reload` take its global settings.
 
 ## All or nothing
 
-Every new and changed session is built, an acceptor opens every new listener, and every new session is registered, before anything is stopped. If any of that fails, for example because of a bad setting, a port in use or a SessionID that is already registered, `Reload` returns the error and the running sessions are untouched.
+The settings are loaded, every new and changed session is built, an acceptor opens every new listener, and every new session is registered, before anything is stopped. If any of that fails, for example because the source returns an error, or because of a bad setting, a port in use or a SessionID that is already registered, `Reload` returns the error and the running sessions are untouched.
 
 A restarted session is registered again only once the session it replaces has stopped. If that fails, for example because another engine sharing the registry has registered its SessionID in the meantime, the session stays stopped, `Reload` returns the error, and the next `Reload` starts it as a new session.
 
@@ -75,13 +109,24 @@ An initiator has no engine-level settings.
 
 ## Timing out
 
-The context passed to `Reload` limits how long it waits for sessions to log out. Once it is done, the sessions still waiting for their Logout to be acknowledged are disconnected without waiting further, and `Reload` returns the context's error, having still applied the whole change.
+The context passed to `Reload` is passed to the source, and limits how long `Reload` waits for sessions to log out. Once it is done, the sessions still waiting for their Logout to be acknowledged are disconnected without waiting further, and `Reload` returns the context's error, having still applied the whole change.
 
 ## Calling Reload
 
 - Calls to `Reload` run one at a time.
-- Called before `Run`, `Reload` replaces the settings `Run` will use.
-- Called once `Run` has returned, `Reload` returns an error.
+- Called before `Run` has started the engine, `Reload` returns an error
+  without calling the source, since `Run` loads the settings itself. Wait for
+  `Ready()` first.
+- Called once `Run` has begun to shut down, `Reload` returns an error.
 - A failed `Reload` does not make `Run` return.
-- The engine keeps the `*Settings` passed to `Reload`. Do not change it
-  afterwards; build new `Settings` for the next `Reload`.
+- Each session `Reload` starts calls `OnCreate` before it runs, and `Reload`
+  returns once each has. Other calls to `Reload` are not kept waiting while
+  `OnCreate` runs, so `OnCreate`, like the other `Application` callbacks, may
+  call `Reload`. A callback must not use `Reload` to stop the session it was
+  called for, though, since `Reload` then waits for the callback to return.
+- The engine copies the `*Settings` the source returns, so the source may
+  return the same `Settings` each time and change them between calls, but not
+  while the engine is calling it. With `StaticSettings`, `Reload` applies the
+  changes made to the settings since they were last loaded.
+- The engine does not watch the source. Call `Reload` when the settings have
+  changed.

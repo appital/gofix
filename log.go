@@ -20,7 +20,7 @@ package gofix
 // A session log that holds resources, such as open files or a database
 // connection, should also implement io.Closer. The engine closes a session's
 // log when Reload removes or restarts the session, or discards a session it
-// built for a Reload that failed.
+// built for a Run or Reload that failed.
 type Log interface {
 	// OnIncoming log incoming fix message.
 	OnIncoming([]byte)

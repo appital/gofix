@@ -95,7 +95,7 @@ func run(ctx context.Context, app gofix.Application, settings *gofix.Settings) e
 	acceptor, err := gofix.NewAcceptor(
 		app,
 		gofix.NewMemoryStoreFactory(),
-		settings,
+		gofix.StaticSettings(settings),
 		screen.NewLogFactory(),
 		gofix.WithMetrics(metrics),
 	)

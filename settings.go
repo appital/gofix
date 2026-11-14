@@ -164,6 +164,18 @@ func (s *Settings) SessionSettings() map[SessionID]*SessionSettings {
 	return allSessionSettings
 }
 
+// clone returns a copy of s that changes to s do not affect.
+func (s *Settings) clone() *Settings {
+	c := NewSettings()
+	if s.globalSettings != nil {
+		c.globalSettings = s.globalSettings.clone()
+	}
+	for sessionID, settings := range s.sessionSettings {
+		c.sessionSettings[sessionID] = settings.clone()
+	}
+	return c
+}
+
 // AddSession adds Session Settings to Settings instance. Returns an error if session settings with duplicate sessionID has already been added.
 func (s *Settings) AddSession(sessionSettings *SessionSettings) (SessionID, error) {
 	s.lazyInit()

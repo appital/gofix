@@ -129,7 +129,7 @@ import (
 
 metrics, err := gofixprom.NewMetricsFactory(prometheus.DefaultRegisterer)
 ...
-acceptor, err := gofix.NewAcceptor(app, storeFactory, settings, logFactory, gofix.WithMetrics(metrics))
+acceptor, err := gofix.NewAcceptor(app, storeFactory, gofix.StaticSettings(settings), logFactory, gofix.WithMetrics(metrics))
 ```
 
 It records `gofix_outgoing_message_count`, `gofix_outgoing_message_bytes`,
@@ -146,8 +146,9 @@ It records `gofix_outgoing_message_count`, `gofix_outgoing_message_bytes`,
   run engines whose SessionIDs overlap.
 - [docs/METRICS.md](docs/METRICS.md) explains the `Metrics` interface, with an
   example that implements a Prometheus counter.
-- [docs/RELOADING.md](docs/RELOADING.md) explains how to change a running
-  engine's sessions with `Reload`.
+- [docs/RELOADING.md](docs/RELOADING.md) explains how an engine loads its
+  settings from a `SettingsSource`, and how to change a running engine's
+  sessions with `Reload`.
 
 ## Development
 

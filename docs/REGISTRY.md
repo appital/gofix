@@ -47,7 +47,7 @@ func run(ctx context.Context, settings *gofix.Settings) error {
 	acceptor, err := gofix.NewAcceptor(
 		&app{registry: registry},
 		gofix.NewMemoryStoreFactory(),
-		settings,
+		gofix.StaticSettings(settings),
 		screen.NewLogFactory(),
 		gofix.WithRegistry(registry),
 	)
@@ -62,6 +62,10 @@ func run(ctx context.Context, settings *gofix.Settings) error {
 
 An Initiator works the same way: pass `gofix.WithRegistry(registry)` to
 `gofix.NewInitiator`.
+
+The sessions are created and registered by `Run`, once it has loaded the
+settings, and not by `NewAcceptor` or `NewInitiator`. `Ready()` is closed once
+they are in the registry.
 
 Things to note:
 

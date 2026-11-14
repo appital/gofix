@@ -278,7 +278,7 @@ func TestAcceptorGlobalLogRedactsCredentials(t *testing.T) {
 	require.NoError(t, err)
 
 	log := &textLog{}
-	acceptor, err := NewAcceptor(&MockApp{}, NewMemoryStoreFactory(), settings, textLogFactory{log}, WithRegistry(NewRegistry()))
+	acceptor, err := NewAcceptor(&MockApp{}, NewMemoryStoreFactory(), StaticSettings(settings), textLogFactory{log}, WithRegistry(NewRegistry()))
 	require.NoError(t, err)
 	_, err = startForTest(t, acceptor)
 	require.NoError(t, err)
