@@ -51,6 +51,9 @@ type lifecycle struct {
 	reloadMu  sync.Mutex
 	readyOnce sync.Once
 	ready     chan struct{}
+	// failed holds the first error passed to fail.
+	failedOnce sync.Once
+	failed     chan error
 }
 
 func (l *lifecycle) load() runState { return runState(l.state.Load()) }
@@ -64,11 +67,29 @@ func (l *lifecycle) readyChan() chan struct{} {
 	return l.ready
 }
 
+// failedChan returns the channel fail sends on.
+func (l *lifecycle) failedChan() chan error {
+	l.failedOnce.Do(func() { l.failed = make(chan error, 1) })
+	return l.failed
+}
+
+// fail makes a running engine shut down as if Run's context were done, and
+// Run return err along with any error shutting down causes. Only the first
+// error is kept. It does not block.
+func (l *lifecycle) fail(err error) {
+	select {
+	case l.failedChan() <- err:
+	default:
+	}
+}
+
 // run is Run. It returns ctx's error if ctx is already done, and errAlreadyRun
 // if Run is running or has run. Otherwise it calls start, which starts the
 // engine and adds to created each session that calls OnCreate as it starts,
 // and once those have, closes Ready. Once ctx is done it calls shutdown and
-// returns its error.
+// returns its error. If fail is called first, it cancels the context it passed
+// to start, as if ctx were done, calls shutdown, and returns fail's error
+// joined with shutdown's.
 //
 // If start fails, nothing must be left running, so that Run may be called
 // again. run then returns ctx's error if ctx is done, since Run was stopped
@@ -81,6 +102,10 @@ func (l *lifecycle) run(ctx context.Context, start func(context.Context, *sync.W
 	if !l.state.CompareAndSwap(int32(runNotStarted), int32(runStarting)) {
 		return errAlreadyRun
 	}
+	// start's context is cancelled if fail is called, so that the engine
+	// shuts down as it does when ctx is done.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	var created sync.WaitGroup
 	if err := start(ctx, &created); err != nil {
@@ -94,11 +119,19 @@ func (l *lifecycle) run(ctx context.Context, start func(context.Context, *sync.W
 	l.store(runStarted)
 	close(l.readyChan())
 
-	<-ctx.Done()
+	var failErr error
+	select {
+	case <-ctx.Done():
+	case failErr = <-l.failedChan():
+		cancel()
+	}
 	l.reloadMu.Lock()
 	l.store(runFinished)
 	l.reloadMu.Unlock()
-	return shutdown()
+	if failErr == nil {
+		return shutdown()
+	}
+	return errors.Join(failErr, shutdown())
 }
 
 // reload is Reload. It returns an error unless Run has started the engine

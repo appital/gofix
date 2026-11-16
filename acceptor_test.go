@@ -18,11 +18,15 @@ package gofix
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -713,4 +717,147 @@ func TestAcceptor_DisconnectsPeerThatStopsReading(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("acceptor did not shut down after its context was cancelled")
 	}
+}
+
+// failingListener returns errs from Accept, one per call, before accepting
+// from the listener it wraps.
+type failingListener struct {
+	net.Listener
+	mu       sync.Mutex
+	errs     []error
+	accepted int
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if len(l.errs) > 0 {
+		err := l.errs[0]
+		l.errs = l.errs[1:]
+		l.mu.Unlock()
+		return nil, err
+	}
+	l.mu.Unlock()
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.mu.Lock()
+		l.accepted++
+		l.mu.Unlock()
+	}
+	return conn, err
+}
+
+func (l *failingListener) acceptedCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.accepted
+}
+
+// globalEventLogFactory records the events logged to the global log.
+type globalEventLogFactory struct {
+	nullLogFactory
+	mu     sync.Mutex
+	events []string
+}
+
+func (f *globalEventLogFactory) Create(*SessionSettings) (Log, error) {
+	return globalEventLog{factory: f}, nil
+}
+
+func (f *globalEventLogFactory) logged() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.events)
+}
+
+type globalEventLog struct {
+	nullLog
+	factory *globalEventLogFactory
+}
+
+func (l globalEventLog) OnEvent(s string) {
+	l.factory.mu.Lock()
+	defer l.factory.mu.Unlock()
+	l.factory.events = append(l.factory.events, s)
+}
+
+func (l globalEventLog) OnEventf(format string, a ...any) { l.OnEvent(fmt.Sprintf(format, a...)) }
+
+// newFailingAcceptor returns an acceptor listening on port whose listener
+// returns errs from Accept before accepting connections.
+func newFailingAcceptor(t *testing.T, port int, errs ...error) (*Acceptor, *failingListener, *globalEventLogFactory) {
+	t.Helper()
+	settings := lifecycleSettings("SERVER", "CLIENT", map[string]string{
+		config.SocketAcceptPort: strconv.Itoa(port),
+		config.HeartBtInt:       "30",
+	})
+	logs := &globalEventLogFactory{}
+	acceptor, err := NewAcceptor(&benchApp{}, NewMemoryStoreFactory(), StaticSettings(settings), logs, WithRegistry(NewRegistry()))
+	require.NoError(t, err)
+	listener := &failingListener{errs: errs}
+	acceptor.SetNewListenerCallback(func(address string, _ *tls.Config) (net.Listener, error) {
+		l, err := net.Listen("tcp", address)
+		listener.Listener = l
+		return listener, err
+	})
+	return acceptor, listener, logs
+}
+
+// TestAcceptor_RetriesTemporaryAcceptErrors checks that an Accept error that
+// may clear up by itself, such as running out of file descriptors, is logged
+// and retried, rather than stopping the acceptor accepting connections.
+func TestAcceptor_RetriesTemporaryAcceptErrors(t *testing.T) {
+	const port = 5012
+	emfile := &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)}
+	acceptor, listener, logs := newFailingAcceptor(t, port, emfile, emfile)
+	run := runForTest(t, acceptor)
+	select {
+	case <-acceptor.Ready():
+	case <-run.done:
+		t.Fatalf("Run returned %v", run.err)
+	}
+
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	require.NoError(t, err)
+	defer conn.Close()
+	require.Eventually(t, func() bool { return listener.acceptedCount() == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	var retried int
+	for _, event := range logs.logged() {
+		if strings.Contains(event, "retrying") && strings.Contains(event, "too many open files") {
+			retried++
+		}
+	}
+	assert.Equal(t, 2, retried)
+	select {
+	case <-run.done:
+		t.Fatalf("Run returned %v", run.err)
+	default:
+	}
+}
+
+// TestAcceptor_RunReturnsAcceptError checks that an Accept error that is not
+// temporary is logged and shuts the acceptor down, with Run returning it, so
+// that the application can tell the acceptor has stopped accepting
+// connections.
+func TestAcceptor_RunReturnsAcceptError(t *testing.T) {
+	const port = 5013
+	broken := errors.New("listener broken")
+	acceptor, _, logs := newFailingAcceptor(t, port, broken)
+	run := runForTest(t, acceptor)
+
+	select {
+	case <-run.done:
+		run.handled = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after Accept failed")
+	}
+	require.ErrorIs(t, run.err, broken)
+	assert.True(t, isClosed(acceptor.Ready()))
+	assert.True(t, slices.ContainsFunc(logs.logged(), func(event string) bool {
+		return strings.Contains(event, "Stopped accepting connections") && strings.Contains(event, "listener broken")
+	}))
+
+	// The port is no longer open.
+	_, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	assert.Error(t, err)
 }

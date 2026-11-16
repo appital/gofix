@@ -1,3 +1,8 @@
+## Unreleased
+
+### BUG FIXES
+* An acceptor stopped accepting connections on a port, for good and without logging anything, after any error from `Accept`, such as running out of file descriptors. `Run` carried on and `Reload` could not reopen the port, so no session on it could log on again until the process restarted. An error that may clear up by itself is now logged to the global log and `Accept` is retried after a delay, starting at 5ms and doubling up to 1s, as `net/http.Server` does. Any other error is logged and shuts the acceptor down, and `Run` returns it
+
 ## 0.6.0 (November 14, 2026)
 
 ### BREAKING CHANGES
