@@ -176,7 +176,8 @@ func (s *Settings) clone() *Settings {
 	return c
 }
 
-// AddSession adds Session Settings to Settings instance. Returns an error if session settings with duplicate sessionID has already been added.
+// AddSession adds Session Settings to Settings instance. Returns an error if
+// session settings with duplicate sessionID has already been added.
 func (s *Settings) AddSession(sessionSettings *SessionSettings) (SessionID, error) {
 	s.lazyInit()
 
@@ -200,4 +201,16 @@ func (s *Settings) AddSession(sessionSettings *SessionSettings) (SessionID, erro
 	s.sessionSettings[sessionID] = sessionSettings
 
 	return sessionID, nil
+}
+
+// RemoveSession removes the session sessionID from s, leaving the global
+// settings and the other sessions as they are. It reports whether s had that
+// session. sessionID is as AddSession returns it, or as a key of the map
+// SessionSettings returns.
+func (s *Settings) RemoveSession(sessionID SessionID) bool {
+	if _, ok := s.sessionSettings[sessionID]; !ok {
+		return false
+	}
+	delete(s.sessionSettings, sessionID)
+	return true
 }
