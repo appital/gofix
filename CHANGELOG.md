@@ -1,5 +1,8 @@
 ## Unreleased
 
+### FEATURES
+* `Settings.RemoveSession` removes a session from `Settings`, leaving the global settings as they are. A `SettingsSource` can use it to drop sessions from the settings it loaded. Previously the only way was to copy the sessions to keep into a new `Settings`, which lost the `[DEFAULT]` section, so the acceptor silently ran without engine settings such as TLS, `MaxMessageSize` and `RedactedTags`
+
 ### BUG FIXES
 * An acceptor stopped accepting connections on a port, for good and without logging anything, after any error from `Accept`, such as running out of file descriptors. `Run` carried on and `Reload` could not reopen the port, so no session on it could log on again until the process restarted. An error that may clear up by itself is now logged to the global log and `Accept` is retried after a delay, starting at 5ms and doubling up to 1s, as `net/http.Server` does. Any other error is logged and shuts the acceptor down, and `Run` returns it
 

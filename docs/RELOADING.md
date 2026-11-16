@@ -36,6 +36,32 @@ receives SIGHUP, applies the changes made to the file since.
 For settings that are already loaded and do not change, such as those parsed
 from an `io.Reader` with `ParseSettings`, use `gofix.StaticSettings(settings)`.
 
+A source can also change the settings it loads before returning them, for
+example to take some sessions offline. Use `Settings.RemoveSession` to drop a
+session, rather than copying the sessions to keep into a new `Settings`, which
+would lose the global settings, and with them engine settings such as TLS:
+
+```go
+func enabledSessions(path string, disabled func(gofix.SessionID) bool) gofix.SettingsSource {
+	load := gofix.FileSettings(path)
+	return func(ctx context.Context) (*gofix.Settings, error) {
+		settings, err := load(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for sessionID := range settings.SessionSettings() {
+			if disabled(sessionID) {
+				settings.RemoveSession(sessionID)
+			}
+		}
+		return settings, nil
+	}
+}
+```
+
+`Reload` then stops the sessions the source no longer returns and leaves the
+rest connected.
+
 ## What Run does
 
 `Run` calls the source with its context, creates the global log, then creates,

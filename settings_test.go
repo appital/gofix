@@ -38,6 +38,49 @@ func TestSettings_New(t *testing.T) {
 	assert.Empty(t, sessionSettings)
 }
 
+// RemoveSession drops one session and keeps the global settings, so engine
+// settings in [DEFAULT] still apply.
+func TestSettings_RemoveSession(t *testing.T) {
+	s, err := ParseSettings(strings.NewReader(`
+[DEFAULT]
+BeginString=FIX.4.4
+SenderCompID=SERVER
+MaxMessageSize=1024
+
+[SESSION]
+TargetCompID=KEEP
+
+[SESSION]
+TargetCompID=DROP
+`))
+	require.NoError(t, err)
+	keep := SessionID{BeginString: BeginStringFIX44, SenderCompID: "SERVER", TargetCompID: "KEEP"}
+	drop := SessionID{BeginString: BeginStringFIX44, SenderCompID: "SERVER", TargetCompID: "DROP"}
+
+	assert.True(t, s.RemoveSession(drop))
+	assert.False(t, s.RemoveSession(drop), "removing a session twice")
+
+	sessions := s.SessionSettings()
+	assert.Len(t, sessions, 1)
+	assert.Contains(t, sessions, keep)
+	maxMessageSize, err := s.GlobalSettings().Setting(config.MaxMessageSize)
+	require.NoError(t, err)
+	assert.Equal(t, "1024", maxMessageSize)
+
+	// The removed session can be added again.
+	ss := NewSessionSettings()
+	ss.Set(config.TargetCompID, "DROP")
+	sessionID, err := s.AddSession(ss)
+	require.NoError(t, err)
+	assert.Equal(t, drop, sessionID)
+}
+
+func TestSettings_RemoveSessionFromEmptySettings(t *testing.T) {
+	id := SessionID{BeginString: BeginStringFIX44, SenderCompID: "SERVER", TargetCompID: "CLIENT"}
+	assert.False(t, NewSettings().RemoveSession(id))
+	assert.False(t, (&Settings{}).RemoveSession(id), "Settings not made by NewSettings")
+}
+
 type SettingsAddSessionSuite struct {
 	suite.Suite
 	settings *Settings
