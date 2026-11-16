@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,6 +140,20 @@ func TestRunAfterShutdownFails(t *testing.T) {
 	require.NoError(t, err)
 	stop()
 	assert.ErrorIs(t, acceptor.Run(context.Background()), errAlreadyRun)
+}
+
+// Run returns shutdown's error as it is once ctx is done, so that callers can
+// compare it or unwrap the errors it joins.
+func TestRunReturnsShutdownError(t *testing.T) {
+	var l lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
+	shutdownErr := errors.Join(errors.New("closing store"), errors.New("closing log"))
+	start := func(context.Context, *sync.WaitGroup) error {
+		cancel()
+		return nil
+	}
+	err := l.run(ctx, start, func() error { return shutdownErr })
+	assert.Same(t, shutdownErr, err)
 }
 
 // A Run that fails to start must not leave listeners open, and may then be

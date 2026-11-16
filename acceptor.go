@@ -93,6 +93,11 @@ type NewListenerCallback func(address string, tlsConfig *tls.Config) (net.Listen
 // is left running or registered and Run may be called again, which loads the
 // settings again.
 //
+// An error accepting connections that may clear up by itself, such as running
+// out of file descriptors, is logged to the global log and retried. Any other
+// error accepting connections is logged then shuts the acceptor down as if ctx
+// were done, and Run then returns it.
+//
 // Run returns ctx's error, starting nothing, if ctx is done before Run has
 // started the acceptor, for example while the SettingsSource is loading,
 // whatever error that causes; Run may then be called again. It returns an
@@ -567,12 +572,43 @@ func NewAcceptor(app Application, storeFactory MessageStoreFactory, settings Set
 // message on a connection unless SocketReadTimeout says otherwise.
 const defaultFirstMessageTimeout = 30 * time.Second
 
+// Accept errors that may clear up by themselves, such as running out of file
+// descriptors, are retried after a delay that starts at minAcceptRetryDelay and
+// doubles up to maxAcceptRetryDelay, as net/http.Server does.
+const (
+	minAcceptRetryDelay = 5 * time.Millisecond
+	maxAcceptRetryDelay = time.Second
+)
+
+// listenForConnections handles the connections listener accepts until the
+// acceptor closes it. It logs a temporary Accept error and retries after a
+// delay. Any other error stops it accepting on listener, and Run shuts the
+// acceptor down and returns the error.
 func (a *Acceptor) listenForConnections(listener net.Listener) {
+	var delay time.Duration
 	for {
 		netConn, err := listener.Accept()
 		if err != nil {
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if !isTemporary(err) {
+				a.globalLog.OnEventf("Stopped accepting connections on %v: %v", listener.Addr(), err)
+				a.lifecycle.fail(fmt.Errorf("accepting connections on %v: %w", listener.Addr(), err))
+				return
+			}
+			delay = min(max(2*delay, minAcceptRetryDelay), maxAcceptRetryDelay)
+			a.globalLog.OnEventf("Accepting connections on %v failed, retrying in %v: %v", listener.Addr(), delay, err)
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-a.stopCtx.Done():
+				timer.Stop()
+				return
+			}
+			continue
 		}
+		delay = 0
 
 		a.connectionGroup.Go(func() {
 			a.handleConnection(netConn)
@@ -893,4 +929,13 @@ func checkDynamicSessionID(id SessionID) error {
 		}
 	}
 	return nil
+}
+
+// isTemporary reports whether err says it may clear up by itself, as
+// net.Error's Temporary method does for EMFILE, ENFILE and ECONNABORTED.
+// Temporary is deprecated because few errors are reliably temporary, but
+// net/http.Server still uses it to decide whether to retry Accept.
+func isTemporary(err error) bool {
+	var temporary interface{ Temporary() bool }
+	return errors.As(err, &temporary) && temporary.Temporary()
 }
