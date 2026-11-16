@@ -23,15 +23,26 @@ concurrency:
 # suites can be restored from git history.
 jobs:
   test:
-    name: Build & Unit Tests
+    name: Build & Unit Tests (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.26', '1.27']
+    env:
+      # Use the toolchain installed by setup-go rather than letting the go
+      # directive in go.mod download a different one.
+      GOTOOLCHAIN: local
     steps:
       - name: Check out source
         uses: actions/checkout@v4
       - name: Setup
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
+          # Resolve to the latest patch release rather than whatever is cached
+          # on the runner, which may be older than the go directive in go.mod.
+          check-latest: true
       - name: Build
         run: make build-src
       - name: Vet
