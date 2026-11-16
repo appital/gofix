@@ -1,4 +1,4 @@
-## Unreleased
+## 0.7.0 (November 16, 2026)
 
 ### FEATURES
 * `Settings.RemoveSession` removes a session from `Settings`, leaving the global settings as they are. A `SettingsSource` can use it to drop sessions from the settings it loaded. Previously the only way was to copy the sessions to keep into a new `Settings`, which lost the `[DEFAULT]` section, so the acceptor silently ran without engine settings such as TLS, `MaxMessageSize` and `RedactedTags`
