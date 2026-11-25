@@ -4,8 +4,8 @@ github.com/pires/go-proxyproto v0.16.0 h1:9KYT/fM3wpjT8bdMEj/7FBcoiUG1KyzEjRYnPu
 github.com/pires/go-proxyproto v0.16.0/go.mod h1:n7yhg8yIfNl3KgYDCwBzmeUHNpKTVnUhcWpc7rV4RW4=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
-github.com/quagmt/udecimal v1.11.1 h1:/DXvHy3H4B1n0AN5tO9cmUQrD2ybkmPxP/AOlp7HMOg=
-github.com/quagmt/udecimal v1.11.1/go.mod h1:ScmJ/xTGZcEoYiyMMzgDLn79PEJHcMBiJ4NNRT3FirA=
+github.com/quagmt/udecimal v1.12.1 h1:o2hxW6C/9rqDpj7mf+pmNVNfOBcUpsHT8RMa8+fu01g=
+github.com/quagmt/udecimal v1.12.1/go.mod h1:+Zp2KHTWQQBS+zzDxxjUDeL5SA2gKKvq3WgSMKwGsSc=
 github.com/shopspring/decimal v1.6.0 h1:DcTwjCj4tJPLuGZYsR9W0hyX9pQwMIkdo26Ig1T9xX4=
 github.com/shopspring/decimal v1.6.0/go.mod h1:gawqmDU56v4yIKSwfBSFip1HdCCXN8/+DMd9qYNcwME=
 github.com/stretchr/objx v0.5.3 h1:jmXUvGomnU1o3W/V5h2VEradbpJDwGrzugQQvL0POH4=
